@@ -21,7 +21,7 @@ worker.on('ready', () => console.log('[worker] ready; queue=devmesh-jobs'))
 worker.on('completed', job => console.log(`[worker] completed ${job.id}`))
 worker.on('failed', (job, error) => console.error(`[worker] failed ${job?.id}:`, error.message))
 
-async function shutdown(signal: string) {
+async function shutdown(signal) {
   console.log(`[worker] ${signal} received; closing gracefully`)
   await worker.close()
   await connection.quit()

@@ -1,4 +1,3 @@
-
 {
   "name": "@devmesh/worker",
   "private": true,
@@ -10,6 +9,7 @@
     "start": "node src/index.js"
   },
   "dependencies": {
+    "@devmesh/database": "^0.1.0",
     "bullmq": "latest",
     "dotenv": "latest",
     "ioredis": "latest"

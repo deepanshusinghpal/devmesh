@@ -1,4 +1,3 @@
-
 {
   "name": "@devmesh/api",
   "private": true,
@@ -10,9 +9,12 @@
     "start": "node src/index.js"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.0",
+    "bullmq": "^5.34.3",
     "cors": "latest",
     "dotenv": "latest",
     "express": "latest",
+    "ioredis": "^5.4.2",
     "zod": "latest"
   }
 }

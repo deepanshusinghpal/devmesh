@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import {
 
@@ -14,19 +14,20 @@ import {
 
 
 
-const initialJobs = [
+// const initialJobs = [
 
-  { id: 'job_8f31a2', name: 'Process customer exports', type: 'file.process', status: 'Running', duration: '00:12', submitted: '2 min ago', priority: 'High' },
+//   { id: 'job_8f31a2', name: 'Process customer exports', type: 'file.process', status: 'Running', duration: '00:12', submitted: '2 min ago', priority: 'High' },
 
-  { id: 'job_7c90bd', name: 'Generate weekly report', type: 'report.generate', status: 'Queued', duration: '—', submitted: '4 min ago', priority: 'Normal' },
+//   { id: 'job_7c90bd', name: 'Generate weekly report', type: 'report.generate', status: 'Queued', duration: '—', submitted: '4 min ago', priority: 'Normal' },
 
-  { id: 'job_61ab42', name: 'Sync product catalog', type: 'catalog.sync', status: 'Completed', duration: '00:08', submitted: '8 min ago', priority: 'Normal' },
+//   { id: 'job_61ab42', name: 'Sync product catalog', type: 'catalog.sync', status: 'Completed', duration: '00:08', submitted: '8 min ago', priority: 'Normal' },
 
-  { id: 'job_4de109', name: 'Send notification batch', type: 'notification.send', status: 'Failed', duration: '00:03', submitted: '12 min ago', priority: 'Low' },
+//   { id: 'job_4de109', name: 'Send notification batch', type: 'notification.send', status: 'Failed', duration: '00:03', submitted: '12 min ago', priority: 'Low' },
 
-  { id: 'job_3ab7f0', name: 'Rebuild search index', type: 'search.reindex', status: 'Completed', duration: '00:42', submitted: '19 min ago', priority: 'High' },
+//   { id: 'job_3ab7f0', name: 'Rebuild search index', type: 'search.reindex', status: 'Completed', duration: '00:42', submitted: '19 min ago', priority: 'High' },
 
-]
+// ]
+const initialJobs = []
 
 
 
@@ -41,6 +42,44 @@ const statusClass = {
 function App() {
 
   const [jobs, setJobs] = useState(initialJobs)
+  const [loadingJobs, setLoadingJobs] = useState(true)
+
+useEffect(() => {
+  let cancelled = false
+
+  async function loadJobs() {
+    try {
+      const response = await fetch('http://localhost:4000/api/v1/jobs')
+      if (!response.ok) throw new Error('Could not load jobs')
+
+      const result = await response.json()
+
+      const formattedJobs = result.data.map(job => ({
+        id: job.id,
+        name: job.name,
+        type: job.type,
+        status: job.status.charAt(0) + job.status.slice(1).toLowerCase(),
+        duration: '—',
+        submitted: new Date(job.createdAt).toLocaleString(),
+        priority:
+          job.priority.charAt(0) + job.priority.slice(1).toLowerCase(),
+      }))
+
+      if (!cancelled) setJobs(formattedJobs)
+    } catch (error) {
+      console.error('Failed to load jobs:', error)
+      if (!cancelled) notify('Could not load jobs from the API')
+    } finally {
+      if (!cancelled) setLoadingJobs(false)
+    }
+  }
+
+  loadJobs()
+
+  return () => {
+    cancelled = true
+  }
+}, [])
 
   const [activeNav, setActiveNav] = useState('Overview')
 
@@ -77,34 +116,57 @@ function App() {
     window.setTimeout(() => setToast(''), 2800)
 
   }
+async function createJob(event) {
+  event.preventDefault()
 
+  if (!jobName.trim()) return
 
+  try {
+    const response = await fetch('http://localhost:4000/api/v1/jobs', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: jobName.trim(),
+        type: jobType,
+        projectId: 'cmv3z5o7v0002qyxwrhjwvwtt',
+        payload: {},
+      }),
+    })
 
-  function createJob(event) {
+    const result = await response.json()
 
-    event.preventDefault()
-
-    if (!jobName.trim()) return
-
-    const job = {
-
-      id: `job_${Math.random().toString(16).slice(2, 8)}`,
-
-      name: jobName.trim(), type: jobType, status: 'Queued', duration: '—', submitted: 'Just now', priority: 'Normal',
-
+    if (!response.ok) {
+      throw new Error(result.error?.message || 'Could not create job')
     }
 
-    setJobs(current => [job, ...current])
+    const job = result.data
+
+    setJobs(current => [
+      {
+        id: job.id,
+        name: job.name,
+        type: job.type,
+        status: 'Queued',
+        duration: '—',
+        submitted: 'Just now',
+        priority:
+          job.priority.charAt(0) + job.priority.slice(1).toLowerCase(),
+      },
+      ...current,
+    ])
 
     setJobName('')
-
     setShowCreate(false)
-
     setActiveNav('Jobs')
-
-    notify('Demo job added to the local dashboard')
-
+    notify('Job saved successfully')
+  } catch (error) {
+    console.error('Create job failed:', error)
+    notify(error.message || 'Could not create job')
   }
+}
+
 
 
 
@@ -197,12 +259,9 @@ function App() {
         <div className="sidebar-bottom">
 
           <div className="usage-card">
-
-            <div className="usage-heading"><span>Monthly usage</span><span className="usage-percent">68%</span></div>
-
-            <div className="usage-track"><div className="usage-fill"/></div>
-
-            <p>68,420 <span>/ 100,000 jobs</span></p>
+            <div className="usage-heading"><span>Monthly usage</span><span className="usage-percent">—</span></div>
+            <div className="usage-track"><div className="usage-fill" style={{ width: '0%' }}/></div>
+            <p>Usage metrics not yet available</p>
 
             <button onClick={() => notify('Usage plans will be configured in a later milestone')}>View usage <ArrowUpRight size={13}/></button>
 
@@ -278,9 +337,9 @@ function App() {
 
             <div className="banner-icon"><Activity size={19}/></div>
 
-            <div className="banner-copy"><strong>System operational</strong><span>All demo services are reporting normally. Live infrastructure connection is coming in the next milestone.</span></div>
+            <div className="banner-copy"><strong>System operational</strong><span>DevMesh API, database, and queue integration are available for local development.</span></div>
 
-            <div className="banner-right"><span className="live-dot"/> DEMO MODE</div>
+            <div className="banner-right"><span className="live-dot"/> LOCAL DEVELOPMENT</div>
 
           </section>
 
@@ -290,11 +349,11 @@ function App() {
 
             <MetricCard title="Total jobs" value={jobs.length.toLocaleString('en-US')} change="+12.8%" trend="up" icon={<Boxes size={17}/>} footer="vs. previous 24 hours" />
 
-            <MetricCard title="Success rate" value="98.24%" change="+2.4%" trend="up" icon={<ShieldCheck size={17}/>} footer="vs. previous 24 hours" />
+            <MetricCard title="Success rate" value="—" change="" trend="neutral" icon={<ShieldCheck size={17}/>} footer="Metrics not yet implemented" />
 
-            <MetricCard title="Avg. execution" value="1.42s" change="-8.2%" trend="up" icon={<Gauge size={17}/>} footer="vs. previous 24 hours" />
+            <MetricCard title="Avg. execution" value="—" change="" trend="neutral" icon={<Gauge size={17}/>} footer="Metrics not yet implemented" />
 
-            <MetricCard title="Active workers" value="08" change="2 idle" trend="neutral" icon={<Cpu size={17}/>} footer="across 3 worker pools" />
+            <MetricCard title="Active workers" value="—" change="" trend="neutral" icon={<Cpu size={17}/>} footer="Worker metrics not yet implemented" />
 
           </section>
 
@@ -306,13 +365,13 @@ function App() {
 
               <div className="panel-heading">
 
-                <div><h2>Job throughput</h2><p>Processed jobs over the last 24 hours</p></div>
+                <div><h2>Job activity</h2><p>Current status of jobs loaded from the API</p></div>
 
                 <button className="select-button" onClick={() => notify('Time range selection will be connected to real metrics later')}>Last 24 hours <ChevronDown size={14}/></button>
 
               </div>
 
-              <div className="chart-summary"><strong>24,891</strong><span className="positive"><ArrowUpRight size={14}/> 14.6%</span><span className="chart-summary-caption">jobs processed</span></div>
+              <div className="chart-summary"><strong>{jobs.filter(job => ['Completed', 'Failed'].includes(job.status)).length}</strong><span className="chart-summary-caption">finished jobs currently loaded</span></div>
 
               <div className="chart">
 
@@ -322,15 +381,9 @@ function App() {
 
                   <div className="chart-gridlines"><i/><i/><i/><i/></div>
 
-                  <svg viewBox="0 0 680 180" preserveAspectRatio="none" role="img" aria-label="Illustrative job throughput chart">
-
-                    <defs><linearGradient id="chartFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#7c6cf2" stopOpacity=".26"/><stop offset="100%" stopColor="#7c6cf2" stopOpacity="0"/></linearGradient></defs>
-
-                    <path d="M0 142 C28 137 30 122 58 128 S95 115 118 126 S154 96 180 111 S210 100 238 107 S265 78 294 91 S326 82 352 94 S385 57 410 72 S444 67 468 76 S495 43 526 60 S555 46 582 54 S620 29 646 42 S665 25 680 30 L680 180 L0 180 Z" fill="url(#chartFill)"/>
-
-                    <path d="M0 142 C28 137 30 122 58 128 S95 115 118 126 S154 96 180 111 S210 100 238 107 S265 78 294 91 S326 82 352 94 S385 57 410 72 S444 67 468 76 S495 43 526 60 S555 46 582 54 S620 29 646 42 S665 25 680 30" fill="none" stroke="#8c7cf6" strokeWidth="2.5" vectorEffect="non-scaling-stroke"/>
-
-                  </svg>
+                  <div className="chart-placeholder">
+  Historical job throughput will be available when metrics are implemented.
+</div>
 
                   <div className="chart-x-labels"><span>00:00</span><span>04:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span><span>Now</span></div>
 
@@ -346,19 +399,13 @@ function App() {
 
               <div className="panel-heading"><div><h2>Worker health</h2><p>Current worker pool status</p></div><button className="icon-button subtle-button" onClick={() => setActiveNav('Workers')} aria-label="View workers"><ArrowUpRight size={17}/></button></div>
 
-              <div className="worker-total"><div className="worker-total-number">08 <span>workers</span></div><span className="healthy-pill"><Check size={12}/> All healthy</span></div>
+              <div className="worker-total"><div className="worker-total-number">— <span>workers</span></div><span className="healthy-pill">Worker metrics unavailable</span></div>
 
-              <div className="worker-bars">
+              <div className="chart-placeholder">
+  Worker pool metrics are not yet connected to the API.
+</div>
 
-                <WorkerBar label="General purpose" count="04 / 04" width="100%" />
-
-                <WorkerBar label="High priority" count="02 / 02" width="100%" />
-
-                <WorkerBar label="Scheduled jobs" count="02 / 02" width="100%" />
-
-              </div>
-
-              <div className="worker-footer"><span><i className="legend-dot green"/> Healthy 8</span><span><i className="legend-dot gray"/> Offline 0</span></div>
+              <div className="worker-footer">Worker health data is not yet available.</div>
 
             </div>
 
@@ -416,7 +463,7 @@ function App() {
 
             </div>
 
-            <div className="table-footer"><span>Showing <strong>{filteredJobs.length}</strong> of <strong>{jobs.length}</strong> demo jobs</span><button onClick={() => { setSearch(''); setStatusFilter('All statuses') }}>Clear filters <X size={13}/></button></div>
+            <div className="table-footer"><span>Showing <strong>{filteredJobs.length}</strong> of <strong>{jobs.length}</strong> jobs</span><button onClick={() => { setSearch(''); setStatusFilter('All statuses') }}>Clear filters <X size={13}/></button></div>
 
           </section>
 
@@ -440,9 +487,9 @@ function App() {
 
           <label className="form-label">Job type<select value={jobType} onChange={e => setJobType(e.target.value)}><option value="file.process">File processing</option><option value="report.generate">Report generation</option><option value="notification.send">Send notifications</option><option value="catalog.sync">Catalog synchronization</option></select></label>
 
-          <div className="demo-notice"><Zap size={15}/><span>This currently creates a local demo record. Real queue submission will be connected in the next milestone.</span></div>
+          <div className="demo-notice"><Zap size={15}/><span>Jobs are submitted to the DevMesh queue for processing.</span></div>
 
-          <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>Cancel</button><button type="submit" className="primary-button"><Plus size={15}/> Create demo job</button></div>
+          <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>Cancel</button><button type="submit" className="primary-button"><Plus size={15}/> Create job</button></div>
 
         </form>
 

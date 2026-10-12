@@ -316,7 +316,7 @@ const worker = new Worker(
         1,
         Number(queueJob.opts.attempts ?? job?.maxAttempts ?? 1),
       )
-      const willRetry = (attempt ?? 0) < maxAttempts
+      const willRetry = (queueJob.attemptsMade + 1) < maxAttempts
 
       console.error(
         `[worker] attempt ${queueJob.attemptsMade + 1}/${maxAttempts} failed for ${jobId}:`,

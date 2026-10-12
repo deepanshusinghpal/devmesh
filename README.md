@@ -15,6 +15,7 @@ DevMesh is a JavaScript-first monorepo for submitting, processing, retrying, and
 - Run dependency-free unit tests for job payload validation and report summary calculations.
 - Retry failed jobs manually while preserving attempt history and protecting newer retry generations from stale queue executions.
 - Cancel queued/retrying jobs before execution and use optional idempotency keys to avoid duplicate job creation.
+- Chain jobs with dependencies; dependent jobs start only after all prerequisites complete, and downstream jobs are cancelled when a prerequisite fails.
 - Show job details, inputs, results, attempts, and the event timeline in the dashboard.
 - Expose live job, queue, and worker-heartbeat metrics through the API.
 - Browse a recent execution-event feed and inspect job status distribution from dedicated dashboard views.
@@ -113,7 +114,7 @@ The named database and Redis volumes are preserved by `down`. Use `docker compos
 | GET | `/health` | Check PostgreSQL and Redis connectivity |
 | GET | `/api/v1/jobs` | List recent persisted jobs |
 | GET | `/api/v1/jobs/:id` | Inspect a job, its attempts, and event history |
-| POST | `/api/v1/jobs` | Validate, persist, and enqueue a job |
+| POST | `/api/v1/jobs` | Validate, persist, and enqueue a job (optional `dependsOn` and `idempotencyKey`) |
 | PATCH | `/api/v1/jobs/:id/input` | Update input for a failed job before retry |
 | POST | `/api/v1/jobs/:id/retry` | Queue a new manual retry generation |
 | POST | `/api/v1/jobs/:id/cancel` | Cancel a queued or retrying job before execution |

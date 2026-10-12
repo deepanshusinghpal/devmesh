@@ -3,7 +3,8 @@ import dotenv from 'dotenv'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
-import { Worker } from 'bullmq'
+import { Queue, Worker } from 'bullmq'
+import { areDependenciesComplete } from './dependencies.js'
 import { generateReport } from './report.js'
 import IORedis from 'ioredis'
 
@@ -46,6 +47,8 @@ const connection = new IORedis(
   process.env.REDIS_URL ?? 'redis://localhost:6379',
   { maxRetriesPerRequest: null },
 )
+
+const dependencyQueue = new Queue(QUEUE_NAME, { connection })
 
 function getPayload(payload) {
   if (
@@ -154,6 +157,92 @@ async function processJob(job) {
   }
 }
 
+async function enqueueReadyDependents(completedJobId) {
+  try {
+    const links = await prisma.jobDependency.findMany({
+      where: { dependencyJobId: completedJobId },
+      include: {
+        dependentJob: {
+          include: {
+            dependencies: {
+              include: {
+                dependencyJob: { select: { id: true, status: true } },
+              },
+            },
+          },
+        },
+      },
+    })
+
+    for (const link of links) {
+      const dependent = link.dependentJob
+      if (
+        dependent.status !== 'QUEUED' ||
+        !areDependenciesComplete(dependent.dependencies)
+      ) {
+        continue
+      }
+
+      await dependencyQueue.add(
+        dependent.type,
+        { jobId: dependent.id, retryGeneration: dependent.retryGeneration },
+        {
+          jobId: dependent.id,
+          attempts: dependent.maxAttempts,
+          backoff: { type: 'exponential', delay: 1000 },
+        },
+      )
+    }
+  } catch (error) {
+    console.error('[worker] could not enqueue ready dependent jobs:', error.message)
+  }
+}
+
+async function cancelBlockedDependents(failedJobId) {
+  try {
+    const failedJob = await prisma.job.findUnique({ where: { id: failedJobId } })
+    if (failedJob?.status !== 'FAILED') return
+
+    const pendingIds = [failedJobId]
+    const visitedIds = new Set([failedJobId])
+
+    while (pendingIds.length) {
+      const dependencyJobId = pendingIds.shift()
+      const links = await prisma.jobDependency.findMany({
+        where: { dependencyJobId },
+        select: { dependentJobId: true },
+      })
+
+      for (const link of links) {
+        const dependentJobId = link.dependentJobId
+        if (visitedIds.has(dependentJobId)) continue
+        visitedIds.add(dependentJobId)
+
+        const updated = await prisma.job.updateMany({
+          where: { id: dependentJobId, status: 'QUEUED' },
+          data: {
+            status: 'CANCELLED',
+            completedAt: new Date(),
+            errorMessage: 'Dependency ' + dependencyJobId + ' failed',
+          },
+        })
+
+        if (updated.count === 1) {
+          await prisma.jobEvent.create({
+            data: {
+              jobId: dependentJobId,
+              eventType: 'CANCELLED',
+              message: 'Job cancelled because dependency ' + dependencyJobId + ' failed',
+            },
+          })
+          pendingIds.push(dependentJobId)
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[worker] could not cancel blocked dependents:', error.message)
+  }
+}
 
 const worker = new Worker(
   QUEUE_NAME,
@@ -299,6 +388,7 @@ const worker = new Worker(
       }
 
       console.log(`[worker] completed ${jobId}: ${job.type}`)
+      await enqueueReadyDependents(jobId)
       return result
     } catch (error) {
       const finishedAt = new Date()
@@ -393,6 +483,10 @@ const worker = new Worker(
         }
       }
 
+      if (!willRetry && job) {
+        await cancelBlockedDependents(jobId)
+      }
+
       // BullMQ must receive real processing errors to trigger automatic retries.
       throw error
     }
@@ -447,6 +541,7 @@ async function shutdown(signal) {
     if (heartbeatInterval) clearInterval(heartbeatInterval)
     await connection.del(workerHeartbeatKey)
     await worker.close()
+    await dependencyQueue.close()
     await connection.quit()
     await prisma.$disconnect()
   } catch (error) {

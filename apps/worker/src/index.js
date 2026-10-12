@@ -2,6 +2,7 @@
 import dotenv from 'dotenv'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
 import { Worker } from 'bullmq'
 import IORedis from 'ioredis'
 
@@ -15,6 +16,30 @@ dotenv.config({
 const { prisma } = await import('@devmesh/database')
 
 const QUEUE_NAME = 'devmesh-jobs'
+
+const workerInstanceId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`
+const workerHeartbeatKey = `devmesh:workers:${workerInstanceId}`
+const activeQueueJobs = new Set()
+let heartbeatInterval
+
+async function publishWorkerHeartbeat() {
+  try {
+    await connection.set(
+      workerHeartbeatKey,
+      JSON.stringify({
+        id: workerInstanceId,
+        pid: process.pid,
+        status: 'ready',
+        activeJobs: activeQueueJobs.size,
+        lastHeartbeatAt: new Date().toISOString(),
+      }),
+      'EX',
+      45,
+    )
+  } catch (error) {
+    console.error('[worker] heartbeat update failed:', error.message)
+  }
+}
 
 const connection = new IORedis(
   process.env.REDIS_URL ?? 'redis://localhost:6379',
@@ -409,13 +434,25 @@ const worker = new Worker(
 
 worker.on('ready', () => {
   console.log(`[worker] ready; queue=${QUEUE_NAME}`)
+  void publishWorkerHeartbeat()
+  heartbeatInterval = setInterval(() => void publishWorkerHeartbeat(), 15000)
+  heartbeatInterval.unref?.()
+})
+
+worker.on('active', job => {
+  if (job?.id) activeQueueJobs.add(job.id)
+  void publishWorkerHeartbeat()
 })
 
 worker.on('completed', job => {
+  if (job?.id) activeQueueJobs.delete(job.id)
+  void publishWorkerHeartbeat()
   console.log(`[worker] completed queue job ${job.id}`)
 })
 
 worker.on('failed', (job, error) => {
+  if (job?.id) activeQueueJobs.delete(job.id)
+  void publishWorkerHeartbeat()
   console.error(
     `[worker] failed queue job ${job?.id}:`,
     error.message,
@@ -435,6 +472,8 @@ async function shutdown(signal) {
   console.log(`[worker] ${signal} received; closing gracefully`)
 
   try {
+    if (heartbeatInterval) clearInterval(heartbeatInterval)
+    await connection.del(workerHeartbeatKey)
     await worker.close()
     await connection.quit()
     await prisma.$disconnect()

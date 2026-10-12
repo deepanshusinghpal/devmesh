@@ -41,6 +41,7 @@ const statusClass = {
 function App() {
 
   const [jobs, setJobs] = useState(initialJobs)
+  const [metrics, setMetrics] = useState(null)
   const [loadingJobs, setLoadingJobs] = useState(true)
   const [selectedJob, setSelectedJob] = useState(null)
   const [editedJobText, setEditedJobText] = useState('')
@@ -127,6 +128,33 @@ useEffect(() => {
   }
 }, [])
 
+// Refresh metrics from the API.
+useEffect(() => {
+  let cancelled = false
+
+  async function loadMetrics() {
+    try {
+      const response = await fetch('http://localhost:4000/api/v1/metrics', {
+        cache: 'no-store',
+      })
+
+      if (!response.ok) throw new Error('Could not load system metrics')
+      const result = await response.json()
+
+      if (!cancelled) setMetrics(result.data)
+    } catch (error) {
+      console.error('Failed to refresh system metrics:', error)
+    }
+  }
+
+  void loadMetrics()
+  const intervalId = window.setInterval(loadMetrics, 5000)
+
+  return () => {
+    cancelled = true
+    window.clearInterval(intervalId)
+  }
+}, [])
 
 // Load and refresh details for the selected job.
 useEffect(() => {
@@ -448,13 +476,13 @@ async function createJob(event) {
 
           <section className="metrics-grid">
 
-            <MetricCard title="Total jobs" value={jobs.length.toLocaleString('en-US')} change="+12.8%" trend="up" icon={<Boxes size={17}/>} footer="vs. previous 24 hours" />
+            <MetricCard title="Total jobs" value={(metrics?.totalJobs ?? jobs.length).toLocaleString('en-US')} change="" trend="neutral" icon={<Boxes size={17}/>} footer="All persisted jobs" />
 
-            <MetricCard title="Success rate" value="—" change="" trend="neutral" icon={<ShieldCheck size={17}/>} footer="Metrics not yet implemented" />
+            <MetricCard title="Success rate" value={metrics?.successRate24h == null ? '—' : `${metrics.successRate24h}%`} change="" trend="neutral" icon={<ShieldCheck size={17}/>} footer={metrics ? `${metrics.completedLast24h} completed in the last 24 hours` : 'Loading metrics…'} />
 
-            <MetricCard title="Avg. execution" value="—" change="" trend="neutral" icon={<Gauge size={17}/>} footer="Metrics not yet implemented" />
+            <MetricCard title="Avg. execution" value={metrics?.averageDurationMs == null ? '—' : `${(metrics.averageDurationMs / 1000).toFixed(2)}s`} change="" trend="neutral" icon={<Gauge size={17}/>} footer="Average recorded attempt duration" />
 
-            <MetricCard title="Active workers" value="—" change="" trend="neutral" icon={<Cpu size={17}/>} footer="Worker metrics not yet implemented" />
+            <MetricCard title="Active workers" value={metrics?.workers.active == null ? '—' : String(metrics.workers.active)} change="" trend="neutral" icon={<Cpu size={17}/>} footer={metrics ? `${metrics.workers.processing} jobs processing now` : 'Loading worker status…'} />
 
           </section>
 
@@ -500,13 +528,31 @@ async function createJob(event) {
 
               <div className="panel-heading"><div><h2>Worker health</h2><p>Current worker pool status</p></div><button className="icon-button subtle-button" onClick={() => setActiveNav('Workers')} aria-label="View workers"><ArrowUpRight size={17}/></button></div>
 
-              <div className="worker-total"><div className="worker-total-number">— <span>workers</span></div><span className="healthy-pill">Worker metrics unavailable</span></div>
+              <div className="worker-total"><div className="worker-total-number">{metrics?.workers.active ?? '—'} <span>workers online</span></div><span className="healthy-pill">{metrics ? 'Live status' : 'Connecting…'}</span></div>
 
-              <div className="chart-placeholder">
-  Worker pool metrics are not yet connected to the API.
-</div>
+              {metrics?.workers.instances?.length ? (
+                <div className="worker-bars">
+                  {metrics.workers.instances.map(worker => (
+                    <div className="worker-bar-row" key={worker.id}>
+                      <div className="worker-bar-label">
+                        <span>{worker.id}</span>
+                        <strong>{worker.activeJobs} active</strong>
+                      </div>
+                      <div className="worker-track">
+                        <div style={{ width: worker.activeJobs > 0 ? '100%' : '8%' }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="chart-placeholder">
+                  {metrics ? 'No live workers detected. Start the worker process to see its heartbeat here.' : 'Waiting for worker health data…'}
+                </div>
+              )}
 
-              <div className="worker-footer">Worker health data is not yet available.</div>
+              <div className="worker-footer">
+                {metrics ? `Queue: ${metrics.queue.waiting ?? 0} waiting · ${metrics.queue.active ?? 0} active · ${metrics.queue.failed ?? 0} failed` : 'Worker and queue metrics are loading.'}
+              </div>
 
             </div>
 

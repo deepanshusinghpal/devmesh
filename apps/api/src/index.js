@@ -264,15 +264,20 @@ app.post('/api/v1/workflows/:id/run', async (req, res) => {
       )
     } catch (queueError) {
       console.error('[workflows:run:queue]', queueError)
-      await prisma.$transaction(async tx => {
-        await tx.job.update({
-          where: { id: firstJob.id },
+      const failureRecorded = await prisma.$transaction(async tx => {
+        // A queue error can be an acknowledgement timeout even if a worker
+        // has already claimed the job. Never overwrite a later job state.
+        const failed = await tx.job.updateMany({
+          where: { id: firstJob.id, status: 'QUEUED' },
           data: {
             status: 'FAILED',
             completedAt: new Date(),
             errorMessage: 'Unable to enqueue workflow',
           },
         })
+
+        if (failed.count !== 1) return false
+
         await tx.jobEvent.create({
           data: {
             jobId: firstJob.id,
@@ -282,23 +287,52 @@ app.post('/api/v1/workflows/:id/run', async (req, res) => {
         })
 
         for (const blockedJob of jobs.slice(1)) {
-          await tx.job.update({
-            where: { id: blockedJob.id },
+          const cancelled = await tx.job.updateMany({
+            where: { id: blockedJob.id, status: 'QUEUED' },
             data: {
               status: 'CANCELLED',
               completedAt: new Date(),
               errorMessage: 'Dependency ' + firstJob.id + ' failed',
             },
           })
-          await tx.jobEvent.create({
-            data: {
-              jobId: blockedJob.id,
-              eventType: 'CANCELLED',
-              message: 'Workflow was not started because its first job could not be queued',
-            },
-          })
+
+          if (cancelled.count === 1) {
+            await tx.jobEvent.create({
+              data: {
+                jobId: blockedJob.id,
+                eventType: 'CANCELLED',
+                message: 'Workflow was not started because its first job could not be queued',
+              },
+            })
+          }
         }
+
+        return true
       })
+
+      if (!failureRecorded) {
+        const latestJobs = await prisma.job.findMany({
+          where: { id: { in: jobs.map(job => job.id) } },
+          orderBy: { createdAt: 'asc' },
+        })
+
+        return res.status(202).json({
+          data: {
+            workflowId: workflow.id,
+            jobs: latestJobs.map((job, index) => ({
+              id: job.id,
+              name: job.name,
+              type: job.type,
+              status: job.status,
+              step: index + 1,
+            })),
+          },
+          meta: {
+            mode: 'database+redis',
+            queueSubmissionUncertain: true,
+          },
+        })
+      }
 
       return res.status(503).json({
         error: { message: 'Workflow was saved but could not be queued' },
@@ -763,17 +797,20 @@ app.post('/api/v1/jobs', async (req, res) => {
   } catch (error) {
     console.error('[jobs:create:queue]', error)
 
-    // The database job already exists. Record the queue failure.
+    // A queue acknowledgement can fail after a worker has already claimed
+    // the job. Only mark it failed while it is still waiting to be queued.
     try {
-      await prisma.$transaction(async (tx) => {
-        await tx.job.update({
-          where: { id: job.id },
+      const failureRecorded = await prisma.$transaction(async tx => {
+        const failed = await tx.job.updateMany({
+          where: { id: job.id, status: 'QUEUED' },
           data: {
             status: 'FAILED',
             errorMessage: 'Unable to enqueue job',
             completedAt: new Date(),
           },
         })
+
+        if (failed.count !== 1) return false
 
         await tx.jobEvent.create({
           data: {
@@ -788,7 +825,20 @@ app.post('/api/v1/jobs', async (req, res) => {
             },
           },
         })
+
+        return true
       })
+
+      if (!failureRecorded) {
+        const latestJob = await prisma.job.findUnique({ where: { id: job.id } })
+        return res.status(202).json({
+          data: latestJob ?? job,
+          meta: {
+            mode: 'database+redis',
+            queueSubmissionUncertain: true,
+          },
+        })
+      }
     } catch (persistenceError) {
       console.error(
         '[jobs:create:queue-failure-persistence]',

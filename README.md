@@ -19,6 +19,7 @@ DevMesh is a JavaScript-first monorepo for submitting, processing, retrying, and
 - Show job details, inputs, results, attempts, and the event timeline in the dashboard.
 - Expose live job, queue, and worker-heartbeat metrics through the API.
 - Browse a recent execution-event feed and inspect job status distribution from dedicated dashboard views.
+- Display live API/database/Redis readiness in the dashboard and gate the container dashboard startup on API health.
 - Run a workspace build in GitHub Actions for pull requests and pushes to `main`.
 
 ## Repository layout

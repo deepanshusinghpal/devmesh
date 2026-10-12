@@ -45,6 +45,7 @@ function App() {
 
   const [jobs, setJobs] = useState(initialJobs)
   const [metrics, setMetrics] = useState(null)
+  const [health, setHealth] = useState(null)
   const [executionEvents, setExecutionEvents] = useState([])
   const [loadingEvents, setLoadingEvents] = useState(false)
   const [loadingJobs, setLoadingJobs] = useState(true)
@@ -185,6 +186,31 @@ useEffect(() => {
 }, [])
 
 // Load the event feed only while the execution logs page is open.
+// Keep the system banner tied to the actual API readiness check.
+useEffect(() => {
+  let cancelled = false
+
+  async function loadHealth() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/health`, { cache: 'no-store' })
+      const result = await response.json()
+      if (!response.ok || result.status !== 'ok') {
+        throw new Error('One or more required services are unavailable')
+      }
+      if (!cancelled) setHealth(true)
+    } catch (error) {
+      if (!cancelled) setHealth(false)
+    }
+  }
+
+  void loadHealth()
+  const intervalId = window.setInterval(loadHealth, 10000)
+  return () => {
+    cancelled = true
+    window.clearInterval(intervalId)
+  }
+}, [])
+
 useEffect(() => {
   if (activeNav !== 'Execution logs') return
 
@@ -549,9 +575,12 @@ async function createJob(event) {
 
             <div className="banner-icon"><Activity size={19}/></div>
 
-            <div className="banner-copy"><strong>System operational</strong><span>DevMesh API, database, and queue integration are available for local development.</span></div>
+            <div className="banner-copy">
+              <strong>{health === true ? 'System operational' : health === false ? 'Service unavailable' : 'Checking system health'}</strong>
+              <span>{health === true ? 'API, PostgreSQL, and Redis health checks passed.' : health === false ? 'The API or a required service is unavailable. Check the API, database, and Redis.' : 'Checking API, database, and Redis connectivity.'}</span>
+            </div>
 
-            <div className="banner-right"><span className="live-dot"/> LOCAL DEVELOPMENT</div>
+            <div className="banner-right"><span className="live-dot"/> {health === true ? 'SYSTEM HEALTHY' : health === false ? 'SYSTEM DEGRADED' : 'CHECKING'}</div>
 
           </section>
 
@@ -595,7 +624,7 @@ async function createJob(event) {
                   <div className="chart-gridlines"><i/><i/><i/><i/></div>
 
                   <div className="chart-placeholder">
-  Historical job throughput will be available when metrics are implemented.
+  Historical throughput time-series are not stored yet. Live queue and worker metrics are available in Monitoring.
 </div>
 
                   <div className="chart-x-labels"><span>00:00</span><span>04:00</span><span>08:00</span><span>12:00</span><span>16:00</span><span>20:00</span><span>Now</span></div>
@@ -799,12 +828,12 @@ async function createJob(event) {
             <section className="panel jobs-panel">
               <div className="panel-heading">
                 <div>
-                  <h2>Workflow orchestration</h2>
-                  <p>Individual job execution is available; multi-step workflow execution is not enabled yet.</p>
+                  <h2>Workflow templates</h2>
+                  <p>Dependency-based job chaining is available; saved workflow templates are not enabled yet.</p>
                 </div>
               </div>
               <div className="chart-placeholder">
-                DevMesh currently supports queueing, retries, cancellation, results, and execution history for individual jobs. Workflow definitions and dependency-driven execution are a future milestone.
+                DevMesh currently supports queueing, retries, cancellation, results, and execution history for individual jobs. Job dependencies can chain individual jobs. Saved workflow templates and run-level management are not implemented yet.
               </div>
               <div className="modal-actions">
                 <button className="primary-button" onClick={() => { setActiveNav('Jobs'); setShowCreate(true) }}>

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { Worker } from 'bullmq'
+import { generateReport } from './report.js'
 import IORedis from 'ioredis'
 
 dotenv.config({
@@ -92,36 +93,7 @@ async function processJob(job) {
     }
 
     case 'report.generate': {
-      const records = Array.isArray(payload.records)
-        ? payload.records
-        : []
-
-      if (
-        !records.every(
-          record =>
-            record !== null &&
-            typeof record === 'object' &&
-            !Array.isArray(record),
-        )
-      ) {
-        throw new Error('payload.records must contain objects')
-      }
-
-      const fields = [
-        ...new Set(records.flatMap(record => Object.keys(record))),
-      ]
-
-      return {
-        type: 'report.generate',
-        generatedAt: new Date().toISOString(),
-        recordCount: records.length,
-        fields,
-        summary: {
-          recordsProcessed: records.length,
-          uniqueFields: fields.length,
-        },
-        sample: records.slice(0, 5),
-      }
+      return generateReport(payload)
     }
 
     case 'catalog.sync': {

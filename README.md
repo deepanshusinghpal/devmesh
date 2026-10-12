@@ -9,6 +9,9 @@ DevMesh is a JavaScript-first monorepo for submitting, processing, retrying, and
 - Persist jobs, execution attempts, results, and event history in PostgreSQL.
 - Submit jobs to BullMQ and process them with a separate worker process.
 - Support `file.process`, `report.generate`, `catalog.sync`, and simulated `notification.send` handlers.
+- Generate report field summaries with missing-value counts, distinct-value counts, and numeric min/max/average/sum statistics.
+- Create jobs from the dashboard using a validated JSON payload with examples for each job type.
+- Run dependency-free unit tests for report validation and summary calculations.
 - Retry failed jobs manually while preserving attempt history and protecting newer retry generations from stale queue executions.
 - Show job details, inputs, results, attempts, and the event timeline in the dashboard.
 - Expose live job, queue, and worker-heartbeat metrics through the API.
@@ -54,7 +57,14 @@ npm run db:generate
 npm run db:migrate
 ```
 
-### 4. Start the services
+### 4. Run tests and build
+
+```bash
+npm test
+npm run build
+```
+
+### 5. Start the services
 
 Use separate terminals from the repository root:
 

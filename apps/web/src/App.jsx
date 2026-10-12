@@ -222,6 +222,7 @@ useEffect(() => {
   const [jobName, setJobName] = useState('')
 
   const [jobType, setJobType] = useState('file.process')
+  const [jobPayload, setJobPayload] = useState(`{\n  "text": "Hello from DevMesh"\n}`)
 
   const [toast, setToast] = useState('')
 
@@ -251,6 +252,23 @@ async function createJob(event) {
 
   if (!jobName.trim()) return
 
+  let parsedPayload
+  try {
+    parsedPayload = JSON.parse(jobPayload)
+  } catch {
+    notify('Input must be valid JSON')
+    return
+  }
+
+  if (
+    parsedPayload === null ||
+    typeof parsedPayload !== 'object' ||
+    Array.isArray(parsedPayload)
+  ) {
+    notify('Input JSON must be an object')
+    return
+  }
+
   try {
     const response = await fetch('http://localhost:4000/api/v1/jobs', {
       method: 'POST',
@@ -261,7 +279,7 @@ async function createJob(event) {
         name: jobName.trim(),
         type: jobType,
         projectId: 'cmv3z5o7v0002qyxwrhjwvwtt',
-        payload: {},
+        payload: parsedPayload,
       }),
     })
 
@@ -288,6 +306,7 @@ async function createJob(event) {
     ])
 
     setJobName('')
+    setJobPayload(`{\n  "text": "Hello from DevMesh"\n}`)
     setShowCreate(false)
     setActiveNav('Jobs')
     notify('Job saved successfully')
@@ -934,7 +953,10 @@ async function createJob(event) {
 
           <label className="form-label">Job name<input autoFocus value={jobName} onChange={e => setJobName(e.target.value)} placeholder="e.g. Process monthly report" required maxLength={100}/></label>
 
-          <label className="form-label">Job type<select value={jobType} onChange={e => setJobType(e.target.value)}><option value="file.process">File processing</option><option value="report.generate">Report generation</option><option value="notification.send">Send notifications</option><option value="catalog.sync">Catalog synchronization</option></select></label>
+          <label className="form-label">Job type<select value={jobType} onChange={e => { const type = e.target.value; setJobType(type); setJobPayload(type === 'report.generate' ? '{\n  "records": [\n    { "name": "Ada", "score": 95 },\n    { "name": "Lin", "score": 88 },\n    { "name": "Grace", "score": 92 }\n  ]\n}' : type === 'catalog.sync' ? '{\n  "products": [\n    { "sku": "SKU-001", "name": "Keyboard", "price": 49.99 },\n    { "sku": "SKU-002", "name": "Mouse", "price": 19.99 }\n  ]\n}' : type === 'notification.send' ? '{\n  "to": "demo@example.com",\n  "message": "Your DevMesh job has completed"\n}' : '{\n  "text": "Hello from DevMesh"\n}') }}><option value="file.process">File processing</option><option value="report.generate">Report generation</option><option value="notification.send">Send notifications (simulated)</option><option value="catalog.sync">Catalog synchronization</option></select></label>
+
+          <label className="form-label">Job input (JSON)<textarea className="payload-editor" value={jobPayload} onChange={e => setJobPayload(e.target.value)} rows={8} spellCheck={false} required aria-describedby="job-payload-help" /></label>
+          <p id="job-payload-help" className="payload-help">Enter a JSON object for this job type. Report generation expects a records array; catalog sync expects a products array.</p>
 
           <div className="demo-notice"><Zap size={15}/><span>Jobs are submitted to the DevMesh queue for processing.</span></div>
 

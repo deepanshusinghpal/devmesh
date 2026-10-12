@@ -551,3 +551,5 @@ tbody tr:hover{background:#151d2c80}
   font-size: 12px;
   line-height: 1.5;
 }
+
+.health-retry{border:1px solid #47685f;background:#18362f;color:#b9f0d8;border-radius:5px;padding:4px 8px;font:inherit;font-size:9px;letter-spacing:0;cursor:pointer}.health-retry:hover:not(:disabled){background:#245044}.health-retry:disabled{opacity:.55;cursor:wait}

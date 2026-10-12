@@ -46,6 +46,8 @@ function App() {
   const [jobs, setJobs] = useState(initialJobs)
   const [metrics, setMetrics] = useState(null)
   const [health, setHealth] = useState(null)
+  const [healthError, setHealthError] = useState('')
+  const [healthCheckVersion, setHealthCheckVersion] = useState(0)
   const [executionEvents, setExecutionEvents] = useState([])
   const [workflows, setWorkflows] = useState([])
   const [loadingWorkflows, setLoadingWorkflows] = useState(false)
@@ -225,11 +227,17 @@ useEffect(() => {
       const response = await fetch(`${API_BASE_URL}/health`, { cache: 'no-store' })
       const result = await response.json()
       if (!response.ok || result.status !== 'ok') {
-        throw new Error('One or more required services are unavailable')
+        throw new Error(result.message || `Health check failed (HTTP ${response.status})`)
       }
-      if (!cancelled) setHealth(true)
+      if (!cancelled) {
+        setHealth(true)
+        setHealthError('')
+      }
     } catch (error) {
-      if (!cancelled) setHealth(false)
+      if (!cancelled) {
+        setHealth(false)
+        setHealthError(error instanceof Error ? error.message : 'Unable to reach the API')
+      }
     }
   }
 
@@ -239,7 +247,7 @@ useEffect(() => {
     cancelled = true
     window.clearInterval(intervalId)
   }
-}, [])
+}, [healthCheckVersion])
 
 useEffect(() => {
   if (activeNav !== 'Execution logs') return
@@ -692,10 +700,14 @@ async function runWorkflow(workflowId) {
 
             <div className="banner-copy">
               <strong>{health === true ? 'System operational' : health === false ? 'Service unavailable' : 'Checking system health'}</strong>
-              <span>{health === true ? 'API, PostgreSQL, and Redis health checks passed.' : health === false ? 'The API or a required service is unavailable. Check the API, database, and Redis.' : 'Checking API, database, and Redis connectivity.'}</span>
+              <span>{health === true ? 'API, PostgreSQL, and Redis health checks passed.' : health === false ? `${healthError || 'Unable to reach the health endpoint.'} API: ${API_BASE_URL}` : `Checking API, database, and Redis at ${API_BASE_URL}.`}</span>
             </div>
 
-            <div className="banner-right"><span className="live-dot"/> {health === true ? 'SYSTEM HEALTHY' : health === false ? 'SYSTEM DEGRADED' : 'CHECKING'}</div>
+            <div className="banner-right">
+              <span className="live-dot"/>
+              {health === true ? 'SYSTEM HEALTHY' : health === false ? 'SYSTEM DEGRADED' : 'CHECKING'}
+              {health !== true && <button className="health-retry" onClick={() => setHealthCheckVersion(version => version + 1)} disabled={health === null}>Retry</button>}
+            </div>
 
           </section>
 

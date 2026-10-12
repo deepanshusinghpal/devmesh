@@ -84,6 +84,26 @@ npm run dev:web
 
 The dashboard is available at `http://localhost:5173`, the API at `http://localhost:4000`, and the API health check at `http://localhost:4000/health`.
 
+## Run the complete stack with Docker Compose
+
+This starts PostgreSQL, Redis, runs database migrations and local seed data, then starts the API, worker, and dashboard.
+
+```bash
+docker compose --profile app up --build -d
+docker compose ps
+```
+
+Open the dashboard at `http://localhost:4173`. The API is available at `http://localhost:4000`.
+
+Useful commands:
+
+```bash
+docker compose --profile app logs -f api worker
+docker compose --profile app down
+```
+
+The named database and Redis volumes are preserved by `down`. Use `docker compose --profile app down -v` only when you intentionally want to delete local data. The default Compose credentials are for local development only; change them and add authentication before any shared or public deployment.
+
 ## API overview
 
 | Method | Endpoint | Purpose |

@@ -32,6 +32,87 @@ services:
       timeout: 3s
       retries: 10
 
+  migrate:
+    build:
+      context: .
+      target: api
+    command: ["npm", "run", "db:migrate:deploy"]
+    environment:
+      DATABASE_URL: postgresql://devmesh:devmesh_local_password@postgres:5432/devmesh?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["app"]
+    restart: "no"
+
+  seed:
+    build:
+      context: .
+      target: api
+    command: ["npm", "run", "db:seed"]
+    environment:
+      DATABASE_URL: postgresql://devmesh:devmesh_local_password@postgres:5432/devmesh?schema=public
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    profiles: ["app"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api
+    container_name: devmesh-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://devmesh:devmesh_local_password@postgres:5432/devmesh?schema=public
+      REDIS_URL: redis://redis:6379
+      API_PORT: 4000
+      WEB_ORIGIN: http://localhost:4173
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    profiles: ["app"]
+
+  worker:
+    build:
+      context: .
+      target: worker
+    container_name: devmesh-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://devmesh:devmesh_local_password@postgres:5432/devmesh?schema=public
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    profiles: ["app"]
+
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:4000}
+    container_name: devmesh-web
+    restart: unless-stopped
+    ports:
+      - "4173:4173"
+    depends_on:
+      api:
+        condition: service_started
+    profiles: ["app"]
+
 volumes:
   devmesh_pgdata:
   devmesh_redisdata:

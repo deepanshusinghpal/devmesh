@@ -14,6 +14,7 @@
     "db:generate": "npm run db:generate --workspace @devmesh/database",
     "db:migrate": "npm run db:migrate --workspace @devmesh/database",
     "test": "node --test apps/worker/test/*.test.js apps/api/test/*.test.js",
-    "db:seed": "npm run db:seed --workspace @devmesh/database"
+    "db:seed": "npm run db:seed --workspace @devmesh/database",
+    "db:migrate:deploy": "npm run db:migrate:deploy --workspace @devmesh/database"
   }
 }

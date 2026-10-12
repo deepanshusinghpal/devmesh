@@ -45,6 +45,8 @@ function App() {
 
   const [jobs, setJobs] = useState(initialJobs)
   const [metrics, setMetrics] = useState(null)
+  const [executionEvents, setExecutionEvents] = useState([])
+  const [loadingEvents, setLoadingEvents] = useState(false)
   const [loadingJobs, setLoadingJobs] = useState(true)
   const [projectId, setProjectId] = useState('')
   const [selectedJob, setSelectedJob] = useState(null)
@@ -53,6 +55,7 @@ function App() {
 const [savingJobInput, setSavingJobInput] = useState(false)
   const [jobDetails, setJobDetails] = useState(null)
   const [loadingJobDetails, setLoadingJobDetails] = useState(false)
+  const [activeNav, setActiveNav] = useState('Overview')
 
 
 useEffect(() => {
@@ -181,6 +184,37 @@ useEffect(() => {
   }
 }, [])
 
+// Load the event feed only while the execution logs page is open.
+useEffect(() => {
+  if (activeNav !== 'Execution logs') return
+
+  let cancelled = false
+
+  async function loadExecutionEvents() {
+    setLoadingEvents(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/events?limit=100`, {
+        cache: 'no-store',
+      })
+      if (!response.ok) throw new Error('Could not load execution events')
+      const result = await response.json()
+      if (!cancelled) setExecutionEvents(result.data)
+    } catch (error) {
+      console.error('Failed to load execution events:', error)
+      if (!cancelled) setExecutionEvents([])
+    } finally {
+      if (!cancelled) setLoadingEvents(false)
+    }
+  }
+
+  void loadExecutionEvents()
+  const intervalId = window.setInterval(loadExecutionEvents, 5000)
+  return () => {
+    cancelled = true
+    window.clearInterval(intervalId)
+  }
+}, [activeNav])
+
 // Load and refresh details for the selected job.
 useEffect(() => {
   if (!selectedJob?.id) return
@@ -233,7 +267,7 @@ useEffect(() => {
 
 
 
-  const [activeNav, setActiveNav] = useState('Overview')
+
 
   const [search, setSearch] = useState('')
 
@@ -534,6 +568,7 @@ async function createJob(event) {
 
 
 
+          {['Overview', 'Workers', 'Monitoring'].includes(activeNav) && (
           <section className="middle-grid">
 
             <div className="panel throughput-panel">
@@ -603,9 +638,9 @@ async function createJob(event) {
             </div>
 
           </section>
+          )}
 
-
-
+          {['Overview', 'Jobs'].includes(activeNav) && (
           <section className="panel jobs-panel">
 
             <div className="panel-heading jobs-heading">
@@ -687,6 +722,94 @@ async function createJob(event) {
             <div className="table-footer"><span>Showing <strong>{filteredJobs.length}</strong> of <strong>{jobs.length}</strong> jobs</span><button onClick={() => { setSearch(''); setStatusFilter('All statuses') }}>Clear filters <X size={13}/></button></div>
 
           </section>
+          )}
+
+          {activeNav === 'Execution logs' && (
+            <section className="panel jobs-panel">
+              <div className="panel-heading jobs-heading">
+                <div>
+                  <h2>Execution logs</h2>
+                  <p>Most recent job state changes, refreshed every five seconds</p>
+                </div>
+                <span className="healthy-pill">{executionEvents.length} events</span>
+              </div>
+              {loadingEvents && executionEvents.length === 0 ? (
+                <div className="chart-placeholder">Loading execution events…</div>
+              ) : executionEvents.length ? (
+                <div className="job-event-timeline">
+                  {executionEvents.map((event, index) => (
+                    <div className="job-event-item" key={event.id}>
+                      <div className={`job-event-marker ${event.eventType.toLowerCase()}`} />
+                      <div className="job-event-body">
+                        <div className="job-event-heading">
+                          <strong>{event.eventType.replaceAll('_', ' ')}</strong>
+                          <span>{index + 1}</span>
+                        </div>
+                        <p>{event.message}</p>
+                        <p className="payload-help">
+                          {event.job?.name ?? 'Unknown job'} · {event.job?.type ?? 'unknown type'} · {event.job?.id ?? event.jobId}
+                        </p>
+                        <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="chart-placeholder">No execution events have been recorded yet.</div>
+              )}
+            </section>
+          )}
+
+          {activeNav === 'Monitoring' && (
+            <section className="panel jobs-panel">
+              <div className="panel-heading jobs-heading">
+                <div>
+                  <h2>Job status distribution</h2>
+                  <p>Live counts from persisted job records</p>
+                </div>
+              </div>
+              {Object.entries(metrics?.statusCounts ?? {}).length ? (
+                <div className="worker-bars">
+                  {Object.entries(metrics.statusCounts).map(([status, count]) => {
+                    const total = Math.max(metrics.totalJobs, 1)
+                    const percent = Math.round((count / total) * 100)
+                    return (
+                      <div className="worker-bar-row" key={status}>
+                        <div className="worker-bar-label">
+                          <span>{status.replaceAll('_', ' ')}</span>
+                          <strong>{count} · {percent}%</strong>
+                        </div>
+                        <div className="worker-track">
+                          <div style={{ width: `${percent}%` }} />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="chart-placeholder">Job status metrics will appear after the API responds.</div>
+              )}
+            </section>
+          )}
+
+          {activeNav === 'Workflows' && (
+            <section className="panel jobs-panel">
+              <div className="panel-heading">
+                <div>
+                  <h2>Workflow orchestration</h2>
+                  <p>Individual job execution is available; multi-step workflow execution is not enabled yet.</p>
+                </div>
+              </div>
+              <div className="chart-placeholder">
+                DevMesh currently supports queueing, retries, cancellation, results, and execution history for individual jobs. Workflow definitions and dependency-driven execution are a future milestone.
+              </div>
+              <div className="modal-actions">
+                <button className="primary-button" onClick={() => { setActiveNav('Jobs'); setShowCreate(true) }}>
+                  <Plus size={15} /> Create a job instead
+                </button>
+              </div>
+            </section>
+          )}
 
 {selectedJob && (
   <div className="job-details-overlay">

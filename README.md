@@ -17,6 +17,7 @@ DevMesh is a JavaScript-first monorepo for submitting, processing, retrying, and
 - Cancel queued/retrying jobs before execution and use optional idempotency keys to avoid duplicate job creation.
 - Show job details, inputs, results, attempts, and the event timeline in the dashboard.
 - Expose live job, queue, and worker-heartbeat metrics through the API.
+- Browse a recent execution-event feed and inspect job status distribution from dedicated dashboard views.
 - Run a workspace build in GitHub Actions for pull requests and pushes to `main`.
 
 ## Repository layout
@@ -117,6 +118,7 @@ The named database and Redis volumes are preserved by `down`. Use `docker compos
 | POST | `/api/v1/jobs/:id/retry` | Queue a new manual retry generation |
 | POST | `/api/v1/jobs/:id/cancel` | Cancel a queued or retrying job before execution |
 | GET | `/api/v1/metrics` | Read job outcome, duration, queue, and worker metrics |
+| GET | `/api/v1/events?limit=50` | List recent execution events (limit 1–100) |
 
 ## Important notes
 

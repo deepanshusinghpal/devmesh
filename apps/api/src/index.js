@@ -62,6 +62,25 @@ app.get('/health', async (_req, res) => {
 })
 
 
+// List workspace projects for the dashboard job creator.
+app.get('/api/v1/projects', async (_req, res) => {
+  res.set('Cache-Control', 'no-store')
+
+  try {
+    const projects = await prisma.project.findMany({
+      select: { id: true, name: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+    })
+
+    return res.json({ data: projects })
+  } catch (error) {
+    console.error('[projects:list]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to fetch projects' },
+    })
+  }
+})
+
 // Return metrics backed by PostgreSQL, BullMQ, and worker heartbeats.
 async function getLiveWorkers() {
   const keys = []

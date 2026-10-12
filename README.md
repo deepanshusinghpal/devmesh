@@ -48,13 +48,14 @@ npm ci
 cp .env.example .env
 ```
 
-Set `DATABASE_URL` and `REDIS_URL` in `.env` to match your local services. Keep secrets out of Git.
+The example database URL uses host port `5433`, matching `docker-compose.yml`. Set `DATABASE_URL`, `REDIS_URL`, `API_PORT`, `VITE_API_URL`, and `WEB_ORIGIN` in `.env` as needed. Keep secrets out of Git. The seed command creates a local demo owner and project so the dashboard can create jobs without a hard-coded database ID.
 
 ### 3. Generate Prisma Client and apply migrations
 
 ```bash
 npm run db:generate
 npm run db:migrate
+npm run db:seed
 ```
 
 ### 4. Run tests and build
@@ -98,5 +99,6 @@ The dashboard is available at `http://localhost:5173`, the API at `http://localh
 
 - `notification.send` is intentionally a local simulation. It does not send real emails or messages.
 - Worker availability is based on short-lived Redis heartbeats; the dashboard reports workers that have checked in recently.
-- The current API has no authentication or authorization layer. Do not expose it publicly or use it with sensitive production data until access control, secret handling, rate limiting, and deployment hardening are implemented.
+- The current API has no authentication or authorization layer. The project-list endpoint and job endpoints are for local development only. Do not expose the API publicly or use it with sensitive production data until access control, secret handling, rate limiting, and deployment hardening are implemented.
+- The local seed creates a placeholder account with no login support. It is not a production user or password.
 - The metrics endpoint reports lifetime job totals and the last 24 hours of completed/failed outcomes. Historical throughput charts and persistent time-series metrics are not implemented yet.

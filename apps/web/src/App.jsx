@@ -12,6 +12,8 @@ import {
 
 } from 'lucide-react'
 
+const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/$/, '')
+
 
 
 // const initialJobs = [
@@ -43,6 +45,7 @@ function App() {
   const [jobs, setJobs] = useState(initialJobs)
   const [metrics, setMetrics] = useState(null)
   const [loadingJobs, setLoadingJobs] = useState(true)
+  const [projectId, setProjectId] = useState('')
   const [selectedJob, setSelectedJob] = useState(null)
   const inputInitializedFor = useRef(null)
   const [editedJobText, setEditedJobText] = useState('')
@@ -54,10 +57,29 @@ const [savingJobInput, setSavingJobInput] = useState(false)
 useEffect(() => {
   let cancelled = false
 
+  async function loadProjects() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/projects`, { cache: 'no-store' })
+      if (!response.ok) throw new Error('Could not load projects')
+      const result = await response.json()
+      if (!cancelled) setProjectId(result.data[0]?.id ?? '')
+    } catch (error) {
+      console.error('Failed to load projects:', error)
+      if (!cancelled) setProjectId('')
+    }
+  }
+
+  void loadProjects()
+  return () => { cancelled = true }
+}, [])
+
+useEffect(() => {
+  let cancelled = false
+
   async function loadJobs() {
     try {
       const response = await fetch(
-        'http://localhost:4000/api/v1/jobs',
+        `${API_BASE_URL}/api/v1/jobs`,
       )
 
       if (!response.ok) {
@@ -135,7 +157,7 @@ useEffect(() => {
 
   async function loadMetrics() {
     try {
-      const response = await fetch('http://localhost:4000/api/v1/metrics', {
+      const response = await fetch(`${API_BASE_URL}/api/v1/metrics`, {
         cache: 'no-store',
       })
 
@@ -166,7 +188,7 @@ useEffect(() => {
   async function loadJobDetails() {
     try {
       const response = await fetch(
-        `http://localhost:4000/api/v1/jobs/${selectedJob.id}`,
+        `${API_BASE_URL}/api/v1/jobs/${selectedJob.id}`,
         { cache: 'no-store' }
       )
 
@@ -251,6 +273,10 @@ async function createJob(event) {
   event.preventDefault()
 
   if (!jobName.trim()) return
+  if (!projectId) {
+    notify('No project is available. Run npm run db:seed, then restart the API.')
+    return
+  }
 
   let parsedPayload
   try {
@@ -270,7 +296,7 @@ async function createJob(event) {
   }
 
   try {
-    const response = await fetch('http://localhost:4000/api/v1/jobs', {
+    const response = await fetch(`${API_BASE_URL}/api/v1/jobs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -278,7 +304,7 @@ async function createJob(event) {
       body: JSON.stringify({
         name: jobName.trim(),
         type: jobType,
-        projectId: 'cmv3z5o7v0002qyxwrhjwvwtt',
+        projectId,
         payload: parsedPayload,
       }),
     })
@@ -773,7 +799,7 @@ async function createJob(event) {
       onClick={async () => {
         try {
           const response = await fetch(
-            `http://localhost:4000/api/v1/jobs/${jobDetails.id}/retry`,
+            `${API_BASE_URL}/api/v1/jobs/${jobDetails.id}/retry`,
             { method: 'POST' },
           )
 
@@ -820,7 +846,7 @@ async function createJob(event) {
 
       try {
         const response = await fetch(
-          `http://localhost:4000/api/v1/jobs/${jobDetails.id}/input`,
+          `${API_BASE_URL}/api/v1/jobs/${jobDetails.id}/input`,
           {
             method: 'PATCH',
             headers: {

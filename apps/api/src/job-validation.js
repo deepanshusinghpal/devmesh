@@ -45,11 +45,17 @@ export function validateJobPayload(type, payload) {
       if (payload.to !== undefined && typeof payload.to !== 'string') {
         return 'payload.to must be a string'
       }
+      if (typeof payload.to === 'string' && !payload.to.trim()) {
+        return 'payload.to must not be empty'
+      }
       if (typeof payload.to === 'string' && payload.to.trim().length > 320) {
         return 'payload.to must be 320 characters or fewer'
       }
       if (payload.message !== undefined && typeof payload.message !== 'string') {
         return 'payload.message must be a string'
+      }
+      if (typeof payload.message === 'string' && !payload.message.trim()) {
+        return 'payload.message must not be empty'
       }
       if (typeof payload.message === 'string' && payload.message.length > 10000) {
         return 'payload.message must be 10000 characters or fewer'

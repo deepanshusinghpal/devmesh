@@ -24,15 +24,22 @@ test('validates catalog products and size', () => {
   assert.equal(validateJobPayload('catalog.sync', { products: [{ sku: 'A' }] }), null)
   assert.match(validateJobPayload('catalog.sync', { products: {} }), /products must be an array/)
   assert.match(validateJobPayload('catalog.sync', { products: [[]] }), /contain objects/)
+  assert.match(validateJobPayload('catalog.sync', { products: Array(10001).fill({}) }), /at most 10000/)
 })
 
-test('validates notification field types and length limits', () => {
+test('validates notification field types, empty values, and length limits', () => {
   assert.equal(validateJobPayload('notification.send', { to: 'demo@example.com', message: 'hello' }), null)
+  assert.equal(validateJobPayload('notification.send', {}), null)
   assert.match(validateJobPayload('notification.send', { to: 42 }), /to must be a string/)
+  assert.match(validateJobPayload('notification.send', { to: '   ' }), /to must not be empty/)
+  assert.match(validateJobPayload('notification.send', { to: 'x'.repeat(321) }), /320 characters/)
+  assert.match(validateJobPayload('notification.send', { message: 42 }), /message must be a string/)
+  assert.match(validateJobPayload('notification.send', { message: '   ' }), /message must not be empty/)
   assert.match(validateJobPayload('notification.send', { message: 'x'.repeat(10001) }), /10000 characters/)
 })
 
 test('rejects non-object payloads and unsupported job types', () => {
   assert.match(validateJobPayload('report.generate', null), /JSON object/)
+  assert.match(validateJobPayload('report.generate', []), /JSON object/)
   assert.match(validateJobPayload('unknown', {}), /Unsupported job type/)
 })

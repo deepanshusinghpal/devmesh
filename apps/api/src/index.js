@@ -262,6 +262,7 @@ const createJobSchema = z.object({
   projectId: z.string().min(1),
   payload: z.record(z.string(), z.unknown()).optional(),
   priority: z.enum(['LOW', 'NORMAL', 'HIGH']).optional(),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
 })
 
 // Create a database job and submit it to BullMQ.
@@ -296,11 +297,27 @@ app.post('/api/v1/jobs', async (req, res) => {
     type,
     projectId,
     priority = 'NORMAL',
+    idempotencyKey,
   } = parsed.data
 
   let job
 
   try {
+    if (idempotencyKey) {
+      const existingJob = await prisma.job.findUnique({
+        where: {
+          projectId_idempotencyKey: { projectId, idempotencyKey },
+        },
+      })
+
+      if (existingJob) {
+        return res.status(200).json({
+          data: existingJob,
+          meta: { mode: 'database+redis', idempotentReplay: true },
+        })
+      }
+    }
+
     job = await prisma.job.create({
       data: {
         name,
@@ -308,6 +325,7 @@ app.post('/api/v1/jobs', async (req, res) => {
         projectId,
         payload,
         priority,
+        idempotencyKey,
         status: 'QUEUED',
         events: {
           create: {
@@ -318,6 +336,22 @@ app.post('/api/v1/jobs', async (req, res) => {
       },
     })
   } catch (error) {
+    // Concurrent requests with the same key converge on the already-created job.
+    if (idempotencyKey && error?.code === 'P2002') {
+      const existingJob = await prisma.job.findUnique({
+        where: {
+          projectId_idempotencyKey: { projectId, idempotencyKey },
+        },
+      })
+
+      if (existingJob) {
+        return res.status(200).json({
+          data: existingJob,
+          meta: { mode: 'database+redis', idempotentReplay: true },
+        })
+      }
+    }
+
     console.error('[jobs:create:database]', error)
 
     return res.status(500).json({
@@ -482,6 +516,90 @@ app.patch('/api/v1/jobs/:id/input', async (req, res) => {
 })
 
 
+
+// Cancel a job only while it is waiting to execute.
+app.post('/api/v1/jobs/:id/cancel', async (req, res) => {
+  const jobId = req.params.id
+
+  try {
+    const outcome = await prisma.$transaction(async tx => {
+      const existingJob = await tx.job.findUnique({
+        where: { id: jobId },
+      })
+
+      if (!existingJob) return { conflict: 'not-found' }
+
+      if (!['QUEUED', 'RETRYING'].includes(existingJob.status)) {
+        return { conflict: 'status', status: existingJob.status }
+      }
+
+      const updated = await tx.job.updateMany({
+        where: {
+          id: jobId,
+          status: { in: ['QUEUED', 'RETRYING'] },
+        },
+        data: {
+          status: 'CANCELLED',
+          completedAt: new Date(),
+          errorMessage: null,
+        },
+      })
+
+      if (updated.count !== 1) {
+        return { conflict: 'status' }
+      }
+
+      await tx.jobEvent.create({
+        data: {
+          jobId,
+          eventType: 'CANCELLED',
+          message: 'Job cancelled before execution',
+        },
+      })
+
+      return {
+        job: await tx.job.findUnique({ where: { id: jobId } }),
+      }
+    })
+
+    if (outcome.conflict === 'not-found') {
+      return res.status(404).json({
+        error: { message: 'Job not found' },
+      })
+    }
+
+    if (outcome.conflict) {
+      return res.status(409).json({
+        error: {
+          message: 'Only queued or retrying jobs can be cancelled',
+          currentStatus: outcome.status,
+        },
+      })
+    }
+
+    // The database state is authoritative. Removing any waiting duplicate is
+    // best-effort; a worker that races with cancellation will fail its claim.
+    try {
+      const waitingJobs = await queue.getJobs(['waiting', 'delayed', 'paused'])
+      const matchingJobs = waitingJobs.filter(
+        queuedJob => queuedJob.data?.jobId === jobId,
+      )
+      await Promise.allSettled(matchingJobs.map(queuedJob => queuedJob.remove()))
+    } catch (queueError) {
+      console.error('[jobs:cancel:queue-cleanup]', queueError)
+    }
+
+    return res.status(200).json({
+      data: outcome.job,
+      meta: { mode: 'database+redis', action: 'cancel' },
+    })
+  } catch (error) {
+    console.error('[jobs:cancel]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to cancel job' },
+    })
+  }
+})
 
  // Manually retry a failed job.
 app.post('/api/v1/jobs/:id/retry', async (req, res) => {

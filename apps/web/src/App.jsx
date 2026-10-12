@@ -37,6 +37,7 @@ const statusClass = {
   Retrying: 'queued',
   Completed: 'completed',
   Failed: 'failed',
+  Cancelled: 'failed',
 }
 
 
@@ -114,6 +115,7 @@ useEffect(() => {
           RETRYING: 'Retrying',
           COMPLETED: 'Completed',
           FAILED: 'Failed',
+          CANCELLED: 'Cancelled',
         }
 
         return {
@@ -631,6 +633,7 @@ async function createJob(event) {
     <option>Retrying</option>
     <option>Completed</option>
     <option>Failed</option>
+    <option>Cancelled</option>
   </select>
   <ChevronDown size={13} />
 </label>
@@ -782,6 +785,36 @@ async function createJob(event) {
   </div>
 )}
 
+
+{['QUEUED', 'RETRYING'].includes(jobDetails.status) && (
+  <div className="job-details-section">
+    <h3>Cancel Job</h3>
+    <p>This job has not started execution yet. Cancelling prevents it from being claimed by a worker.</p>
+    <button
+      type="button"
+      className="secondary-button"
+      onClick={async () => {
+        try {
+          const response = await fetch(
+            `${API_BASE_URL}/api/v1/jobs/${jobDetails.id}/cancel`,
+            { method: 'POST' },
+          )
+          const result = await response.json()
+          if (!response.ok) {
+            throw new Error(result.error?.message || 'Unable to cancel job')
+          }
+          setJobDetails(current => ({ ...current, ...result.data }))
+          notify('Job cancelled')
+        } catch (error) {
+          console.error('Failed to cancel job:', error)
+          notify(error.message || 'Unable to cancel job')
+        }
+      }}
+    >
+      <X size={14} /> Cancel Job
+    </button>
+  </div>
+)}
 
 {jobDetails.status === 'FAILED' && (
   <div className="job-details-section">

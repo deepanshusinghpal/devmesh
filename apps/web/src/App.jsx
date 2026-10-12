@@ -8,7 +8,7 @@ import {
 
   GitBranch, LayoutDashboard, ListFilter, Menu, Plus, Search, Settings2,
 
-  ShieldCheck, Sparkles, TerminalSquare, Workflow, X, Zap,
+  ShieldCheck, Sparkles, TerminalSquare, Workflow, X, Zap, Copy,
 
 } from 'lucide-react'
 
@@ -29,57 +29,158 @@ import {
 // ]
 const initialJobs = []
 
-
-
 const statusClass = {
-
-  Running: 'running', Queued: 'queued', Completed: 'completed', Failed: 'failed',
-
+  Running: 'running',
+  Queued: 'queued',
+  Retrying: 'queued',
+  Completed: 'completed',
+  Failed: 'failed',
 }
-
 
 
 function App() {
 
   const [jobs, setJobs] = useState(initialJobs)
   const [loadingJobs, setLoadingJobs] = useState(true)
+  const [selectedJob, setSelectedJob] = useState(null)
+  const [editedJobText, setEditedJobText] = useState('')
+const [savingJobInput, setSavingJobInput] = useState(false)
+  const [jobDetails, setJobDetails] = useState(null)
+  const [loadingJobDetails, setLoadingJobDetails] = useState(false)
+
 
 useEffect(() => {
   let cancelled = false
 
   async function loadJobs() {
     try {
-      const response = await fetch('http://localhost:4000/api/v1/jobs')
-      if (!response.ok) throw new Error('Could not load jobs')
+      const response = await fetch(
+        'http://localhost:4000/api/v1/jobs',
+      )
+
+      if (!response.ok) {
+        throw new Error('Could not load jobs')
+      }
 
       const result = await response.json()
 
-      const formattedJobs = result.data.map(job => ({
-        id: job.id,
-        name: job.name,
-        type: job.type,
-        status: job.status.charAt(0) + job.status.slice(1).toLowerCase(),
-        duration: '—',
-        submitted: new Date(job.createdAt).toLocaleString(),
-        priority:
-          job.priority.charAt(0) + job.priority.slice(1).toLowerCase(),
-      }))
+      const formattedJobs = result.data.map(job => {
+        const startedAt = job.startedAt
+          ? new Date(job.startedAt)
+          : null
 
-      if (!cancelled) setJobs(formattedJobs)
+        const completedAt = job.completedAt
+          ? new Date(job.completedAt)
+          : null
+
+        let duration = '—'
+
+        if (startedAt && completedAt) {
+          const seconds =
+            (completedAt.getTime() - startedAt.getTime()) / 1000
+
+          duration = `${seconds.toFixed(2)}s`
+        } else if (startedAt) {
+          duration = 'In progress'
+        }
+
+        const statusLabels = {
+          QUEUED: 'Queued',
+          RUNNING: 'Running',
+          RETRYING: 'Retrying',
+          COMPLETED: 'Completed',
+          FAILED: 'Failed',
+        }
+
+        return {
+          id: job.id,
+          name: job.name,
+          type: job.type,
+          status: statusLabels[job.status] ?? job.status,
+          duration,
+          submitted: new Date(job.createdAt).toLocaleString(),
+          priority:
+            job.priority.charAt(0) +
+            job.priority.slice(1).toLowerCase(),
+        }
+      })
+
+      if (!cancelled) {
+        setJobs(formattedJobs)
+      }
     } catch (error) {
-      console.error('Failed to load jobs:', error)
-      if (!cancelled) notify('Could not load jobs from the API')
+      console.error('Failed to refresh jobs:', error)
     } finally {
-      if (!cancelled) setLoadingJobs(false)
+      if (!cancelled) {
+        setLoadingJobs(false)
+      }
     }
   }
 
   loadJobs()
 
+  const refreshInterval = window.setInterval(loadJobs, 3000)
+
   return () => {
     cancelled = true
+    window.clearInterval(refreshInterval)
   }
 }, [])
+
+
+// Load and refresh details for the selected job.
+useEffect(() => {
+  if (!selectedJob?.id) return
+
+  let cancelled = false
+
+  async function loadJobDetails() {
+    try {
+      const response = await fetch(
+        `http://localhost:4000/api/v1/jobs/${selectedJob.id}`,
+        { cache: 'no-store' }
+      )
+
+      if (!response.ok) {
+        throw new Error('Could not load job details')
+      }
+
+      const result = await response.json()
+
+      if (!cancelled) {
+  setJobDetails(result.data)
+
+  if (inputInitializedFor.current !== result.data.id) {
+    setEditedJobText(
+      typeof result.data.payload?.text === 'string'
+        ? result.data.payload.text
+        : ''
+    )
+
+    inputInitializedFor.current = result.data.id
+  }
+}
+    } catch (error) {
+      console.error('Failed to load job details:', error)
+    } finally {
+      if (!cancelled) {
+        setLoadingJobDetails(false)
+      }
+    }
+  }
+
+  setLoadingJobDetails(true)
+  loadJobDetails()
+
+  const intervalId = window.setInterval(loadJobDetails, 3000)
+
+  return () => {
+    cancelled = true
+    window.clearInterval(intervalId)
+  }
+}, [selectedJob?.id])
+
+
 
   const [activeNav, setActiveNav] = useState('Overview')
 
@@ -427,7 +528,22 @@ async function createJob(event) {
 
               <div className="search-field"><Search size={15}/><input id="job-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search jobs, IDs, or types..." /></div>
 
-              <label className="filter-select"><Filter size={14}/><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label="Filter by status"><option>All statuses</option><option>Running</option><option>Queued</option><option>Completed</option><option>Failed</option></select><ChevronDown size={13}/></label>
+              <label className="filter-select">
+  <Filter size={14} />
+  <select
+    value={statusFilter}
+    onChange={e => setStatusFilter(e.target.value)}
+    aria-label="Filter by status"
+  >
+    <option>All statuses</option>
+    <option>Running</option>
+    <option>Queued</option>
+    <option>Retrying</option>
+    <option>Completed</option>
+    <option>Failed</option>
+  </select>
+  <ChevronDown size={13} />
+</label>
 
               <button className="icon-button table-filter-button" onClick={() => { setSearch(''); setStatusFilter('All statuses') }} aria-label="Clear filters"><ListFilter size={16}/></button>
 
@@ -451,7 +567,19 @@ async function createJob(event) {
 
                     <td className="duration-cell">{job.duration}</td><td className="submitted-cell">{job.submitted}</td>
 
-                    <td><button className="row-more" aria-label={`More actions for ${job.name}`} onClick={() => notify(`${job.name}: demo record — API integration comes next`)}><Ellipsis size={18}/></button></td>
+                    <td>
+<button
+  className="row-more"
+  aria-label={`View details for ${job.name}`}
+  onClick={() => {
+    setSelectedJob(job)
+    setJobDetails(null)
+    setLoadingJobDetails(true)
+  }}
+>
+  <Ellipsis size={18} />
+</button>
+</td>
 
                   </tr>)}
 
@@ -466,6 +594,280 @@ async function createJob(event) {
             <div className="table-footer"><span>Showing <strong>{filteredJobs.length}</strong> of <strong>{jobs.length}</strong> jobs</span><button onClick={() => { setSearch(''); setStatusFilter('All statuses') }}>Clear filters <X size={13}/></button></div>
 
           </section>
+
+{selectedJob && (
+  <div className="job-details-overlay">
+    <section
+      className="job-details-panel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="job-details-title"
+    >
+      <div className="panel-heading">
+        <div>
+          <h2 id="job-details-title">Job Details</h2>
+          <p>{selectedJob.name}</p>
+        </div>
+
+        <button
+          className="icon-button"
+          onClick={() => {
+            setSelectedJob(null)
+            setJobDetails(null)
+          }}
+          aria-label="Close job details"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      {loadingJobDetails && !jobDetails ? (
+        <p>Loading job details...</p>
+      ) : jobDetails ? (
+        <div className="job-details-content">
+          <div>
+            <strong>Status</strong>
+            <p>{jobDetails.status}</p>
+          </div>
+
+
+<div>
+  <strong>Job ID</strong>
+  <div className="job-id-copy-row">
+    <p className="job-details-id">{jobDetails.id}</p>
+    <button
+      type="button"
+      className="job-copy-button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(jobDetails.id)
+          notify('Job ID copied to clipboard')
+        } catch (error) {
+          console.error('Failed to copy job ID:', error)
+          notify('Could not copy job ID')
+        }
+      }}
+      aria-label="Copy job ID"
+      title="Copy job ID"
+    >
+      <Copy size={14} />
+    </button>
+  </div>
+</div>
+
+
+          <div>
+            <strong>Type</strong>
+            <p>{jobDetails.type}</p>
+          </div>
+
+          <div>
+            <strong>Priority</strong>
+            <p>{jobDetails.priority}</p>
+          </div>
+
+
+<div>
+  <strong>Total Attempts</strong>
+  <p>{jobDetails.attempts?.length ?? jobDetails.attemptCount}</p>
+  <small>Includes previous failures and manual retries.</small>
+</div>
+
+<div>
+  <strong>Retry Limit</strong>
+  <p>{jobDetails.maxAttempts} per queue execution</p>
+</div>
+
+
+          <div>
+            <strong>Created</strong>
+            <p>{new Date(jobDetails.createdAt).toLocaleString()}</p>
+          </div>
+
+
+{jobDetails.errorMessage && (
+  <div className="job-details-error">
+    <strong>Error</strong>
+    <p>{jobDetails.errorMessage}</p>
+  </div>
+)}
+
+
+{jobDetails.status === 'FAILED' && (
+  <div className="job-details-section">
+    <h3>Retry Job</h3>
+    <p>
+      This job failed. You can queue it for another execution.
+      Previous execution attempts will remain in the history.
+    </p>
+
+    <button
+      type="button"
+      className="secondary-button"
+      onClick={async () => {
+        try {
+          const response = await fetch(
+            `http://localhost:4000/api/v1/jobs/${jobDetails.id}/retry`,
+            { method: 'POST' },
+          )
+
+          const result = await response.json()
+
+          if (!response.ok) {
+            throw new Error(
+              result.error?.message || 'Unable to retry job',
+            )
+          }
+
+          notify('Job queued for retry')
+        } catch (error) {
+          console.error('Failed to retry job:', error)
+          notify(error.message || 'Unable to retry job')
+        }
+      }}
+    >
+      <Zap size={14} />
+      Retry Job
+    </button>
+  </div>
+)}
+
+
+
+
+<div className="job-details-section">
+  <h3>Input</h3>
+
+  <textarea
+    value={editedJobText}
+    onChange={event => setEditedJobText(event.target.value)}
+    placeholder="Enter text to process..."
+    rows={6}
+  />
+
+  <button
+    type="button"
+    className="secondary-button"
+    disabled={savingJobInput || !editedJobText.trim()}
+    onClick={async () => {
+      setSavingJobInput(true)
+
+      try {
+        const response = await fetch(
+          `http://localhost:4000/api/v1/jobs/${jobDetails.id}/input`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text: editedJobText }),
+          },
+        )
+
+        const result = await response.json()
+
+        if (!response.ok) {
+          throw new Error(
+            result.error?.message || 'Unable to save job input',
+          )
+        }
+
+        setJobDetails(current => ({
+          ...current,
+          ...result.data,
+        }))
+
+        notify('Job input saved successfully')
+      } catch (error) {
+        console.error('Failed to save job input:', error)
+        notify(error.message || 'Unable to save job input')
+      } finally {
+        setSavingJobInput(false)
+      }
+    }}
+  >
+    {savingJobInput ? 'Saving...' : 'Save Input'}
+  </button>
+
+  <pre>{JSON.stringify(jobDetails.payload, null, 2)}</pre>
+</div>
+
+
+          <div className="job-details-section">
+            <h3>Result</h3>
+            <pre>
+              {jobDetails.result
+                ? JSON.stringify(jobDetails.result, null, 2)
+                : 'No result available yet.'}
+            </pre>
+          </div>
+
+          <div className="job-details-section">
+            <h3>Execution Attempts</h3>
+
+            {jobDetails.attempts?.length ? (
+              jobDetails.attempts.map(attempt => (
+                <div className="job-details-record" key={attempt.id}>
+                  <strong>Attempt {attempt.attempt}</strong>
+                  <p>Status: {attempt.status}</p>
+                  <p>Worker: {attempt.workerId || 'Not assigned'}</p>
+                  <p>
+                    Duration:{' '}
+                    {attempt.durationMs != null
+                      ? `${attempt.durationMs} ms`
+                      : 'In progress'}
+                  </p>
+                  {attempt.errorMessage && (
+                    <p className="job-details-error">
+                      {attempt.errorMessage}
+                    </p>
+                  )}
+                </div>
+              ))
+            ) : (
+              <p>No execution attempts recorded yet.</p>
+            )}
+          </div>
+
+
+<div className="job-details-section">
+  <h3>Event Timeline</h3>
+
+  {jobDetails.events?.length ? (
+    <div className="job-event-timeline">
+      {jobDetails.events.map((event, index) => (
+        <div className="job-event-item" key={event.id}>
+          <div
+            className={`job-event-marker ${event.eventType.toLowerCase()}`}
+          />
+
+          <div className="job-event-body">
+            <div className="job-event-heading">
+              <strong>{event.eventType.replaceAll('_', ' ')}</strong>
+              <span>{index + 1}</span>
+            </div>
+
+            <p>{event.message}</p>
+
+            <time dateTime={event.createdAt}>
+              {new Date(event.createdAt).toLocaleString()}
+            </time>
+          </div>
+        </div>
+      ))}
+    </div>
+  ) : (
+    <p>No events recorded yet.</p>
+  )}
+</div>
+
+        </div>
+      ) : (
+        <p>Unable to load job details. Check the browser console and try again.</p>
+      )}
+    </section>
+  </div>
+)}
 
 
 

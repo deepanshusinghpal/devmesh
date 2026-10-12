@@ -55,11 +55,12 @@ model Job {
   result         Json?
   errorMessage   String?
   idempotencyKey String?
-  maxAttempts    Int          @default(3)
-  attemptCount   Int          @default(0)
-  scheduledAt    DateTime?
-  startedAt      DateTime?
-  completedAt    DateTime?
+  maxAttempts     Int          @default(3)
+  attemptCount    Int          @default(0)
+  retryGeneration Int          @default(0)
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   attempts       JobAttempt[]

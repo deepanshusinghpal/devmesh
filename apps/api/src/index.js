@@ -62,6 +62,111 @@ app.get('/health', async (_req, res) => {
 })
 
 
+// Return metrics backed by PostgreSQL, BullMQ, and worker heartbeats.
+async function getLiveWorkers() {
+  const keys = []
+  let cursor = '0'
+
+  do {
+    const [nextCursor, batch] = await redis.scan(
+      cursor,
+      'MATCH',
+      'devmesh:workers:*',
+      'COUNT',
+      100,
+    )
+    cursor = nextCursor
+    keys.push(...batch)
+  } while (cursor !== '0')
+
+  if (keys.length === 0) return []
+
+  const values = await redis.mget(...keys)
+  const now = Date.now()
+
+  return values.flatMap(value => {
+    if (!value) return []
+
+    try {
+      const worker = JSON.parse(value)
+      const heartbeatTime = Date.parse(worker.lastHeartbeatAt)
+      if (!Number.isFinite(heartbeatTime) || now - heartbeatTime > 45000) {
+        return []
+      }
+      return [worker]
+    } catch {
+      return []
+    }
+  })
+}
+
+app.get('/api/v1/metrics', async (_req, res) => {
+  res.set('Cache-Control', 'no-store')
+
+  try {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    const [
+      totalJobs,
+      statusGroups,
+      recentCompleted,
+      recentFailed,
+      durationStats,
+      queueCounts,
+      workers,
+    ] = await Promise.all([
+      prisma.job.count(),
+      prisma.job.groupBy({
+        by: ['status'],
+        _count: { _all: true },
+      }),
+      prisma.job.count({
+        where: { status: 'COMPLETED', completedAt: { gte: since } },
+      }),
+      prisma.job.count({
+        where: { status: 'FAILED', completedAt: { gte: since } },
+      }),
+      prisma.jobAttempt.aggregate({
+        where: { durationMs: { not: null } },
+        _avg: { durationMs: true },
+      }),
+      queue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed', 'paused'),
+      getLiveWorkers(),
+    ])
+
+    const statusCounts = Object.fromEntries(
+      statusGroups.map(group => [group.status, group._count._all]),
+    )
+    const finishedRecent = recentCompleted + recentFailed
+
+    return res.json({
+      data: {
+        generatedAt: new Date().toISOString(),
+        totalJobs,
+        statusCounts,
+        successRate24h: finishedRecent
+          ? Number(((recentCompleted / finishedRecent) * 100).toFixed(1))
+          : null,
+        averageDurationMs: durationStats._avg.durationMs == null
+          ? null
+          : Math.round(durationStats._avg.durationMs),
+        completedLast24h: recentCompleted,
+        failedLast24h: recentFailed,
+        queue: queueCounts,
+        workers: {
+          active: workers.length,
+          processing: workers.reduce((sum, worker) => sum + (Number(worker.activeJobs) || 0), 0),
+          instances: workers,
+        },
+      },
+    })
+  } catch (error) {
+    console.error('[metrics]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to fetch system metrics' },
+    })
+  }
+})
+
 // List the latest jobs.
 app.get('/api/v1/jobs', async (_req, res) => {
   // Prevent the browser from reusing a cached jobs response.

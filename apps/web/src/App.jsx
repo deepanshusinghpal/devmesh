@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
 
@@ -44,6 +44,7 @@ function App() {
   const [metrics, setMetrics] = useState(null)
   const [loadingJobs, setLoadingJobs] = useState(true)
   const [selectedJob, setSelectedJob] = useState(null)
+  const inputInitializedFor = useRef(null)
   const [editedJobText, setEditedJobText] = useState('')
 const [savingJobInput, setSavingJobInput] = useState(false)
   const [jobDetails, setJobDetails] = useState(null)

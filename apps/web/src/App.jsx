@@ -278,6 +278,7 @@ useEffect(() => {
   const [jobName, setJobName] = useState('')
 
   const [jobType, setJobType] = useState('file.process')
+  const [jobDependencies, setJobDependencies] = useState('')
   const [jobPayload, setJobPayload] = useState(`{\n  "text": "Hello from DevMesh"\n}`)
 
   const [toast, setToast] = useState('')
@@ -340,6 +341,7 @@ async function createJob(event) {
         type: jobType,
         projectId,
         payload: parsedPayload,
+        dependsOn: jobDependencies.split(',').map(id => id.trim()).filter(Boolean),
       }),
     })
 
@@ -366,6 +368,7 @@ async function createJob(event) {
     ])
 
     setJobName('')
+    setJobDependencies('')
     setJobPayload(`{\n  "text": "Hello from DevMesh"\n}`)
     setShowCreate(false)
     setActiveNav('Jobs')
@@ -882,6 +885,24 @@ async function createJob(event) {
             <p>{jobDetails.priority}</p>
           </div>
 
+          {jobDetails.dependencies?.length > 0 && (
+            <div>
+              <strong>Depends on</strong>
+              {jobDetails.dependencies.map(dependency => (
+                <p key={dependency.id}>{dependency.dependencyJob.name} — {dependency.dependencyJob.status}</p>
+              ))}
+            </div>
+          )}
+
+          {jobDetails.dependents?.length > 0 && (
+            <div>
+              <strong>Dependent jobs</strong>
+              {jobDetails.dependents.map(dependency => (
+                <p key={dependency.id}>{dependency.dependentJob.name} — {dependency.dependentJob.status}</p>
+              ))}
+            </div>
+          )}
+
 
 <div>
   <strong>Total Attempts</strong>
@@ -1156,6 +1177,9 @@ async function createJob(event) {
 
           <label className="form-label">Job input (JSON)<textarea className="payload-editor" value={jobPayload} onChange={e => setJobPayload(e.target.value)} rows={8} spellCheck={false} required aria-describedby="job-payload-help" /></label>
           <p id="job-payload-help" className="payload-help">Enter a JSON object for this job type. Report generation expects a records array; catalog sync expects a products array.</p>
+
+          <label className="form-label">Depends on job IDs (optional)<input value={jobDependencies} onChange={e => setJobDependencies(e.target.value)} placeholder="Paste job IDs separated by commas" /></label>
+          <p className="payload-help">This job waits until every listed job completes successfully. Failed prerequisites cancel downstream jobs.</p>
 
           <div className="demo-notice"><Zap size={15}/><span>Jobs are submitted to the DevMesh queue for processing.</span></div>
 

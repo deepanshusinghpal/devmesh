@@ -263,6 +263,20 @@ app.get('/api/v1/jobs/:id', async (req, res) => {
         events: {
           orderBy: { createdAt: 'asc' },
         },
+        dependencies: {
+          include: {
+            dependencyJob: {
+              select: { id: true, name: true, status: true },
+            },
+          },
+        },
+        dependents: {
+          include: {
+            dependentJob: {
+              select: { id: true, name: true, status: true },
+            },
+          },
+        },
       },
     })
 
@@ -296,6 +310,7 @@ const createJobSchema = z.object({
   payload: z.record(z.string(), z.unknown()).optional(),
   priority: z.enum(['LOW', 'NORMAL', 'HIGH']).optional(),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  dependsOn: z.array(z.string().min(1)).max(20).optional().refine(ids => !ids || new Set(ids).size === ids.length, { message: 'dependsOn must not contain duplicate job IDs' }),
 })
 
 // Create a database job and submit it to BullMQ.
@@ -331,6 +346,7 @@ app.post('/api/v1/jobs', async (req, res) => {
     projectId,
     priority = 'NORMAL',
     idempotencyKey,
+    dependsOn = [],
   } = parsed.data
 
   let job
@@ -351,6 +367,36 @@ app.post('/api/v1/jobs', async (req, res) => {
       }
     }
 
+    if (dependsOn.length) {
+      const dependencyJobs = await prisma.job.findMany({
+        where: { id: { in: dependsOn }, projectId },
+        select: { id: true, status: true },
+      })
+
+      if (dependencyJobs.length !== dependsOn.length) {
+        return res.status(400).json({
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Every dependency must be an existing job in the same project',
+          },
+        })
+      }
+
+      const unavailableDependency = dependencyJobs.find(
+        dependency => ['FAILED', 'CANCELLED'].includes(dependency.status),
+      )
+
+      if (unavailableDependency) {
+        return res.status(409).json({
+          error: {
+            message: 'A job cannot depend on a failed or cancelled job',
+            dependencyJobId: unavailableDependency.id,
+            currentStatus: unavailableDependency.status,
+          },
+        })
+      }
+    }
+
     job = await prisma.job.create({
       data: {
         name,
@@ -359,6 +405,11 @@ app.post('/api/v1/jobs', async (req, res) => {
         payload,
         priority,
         idempotencyKey,
+        dependencies: {
+          create: dependsOn.map(dependencyJobId => ({
+            dependencyJob: { connect: { id: dependencyJobId } },
+          })),
+        },
         status: 'QUEUED',
         events: {
           create: {
@@ -392,6 +443,61 @@ app.post('/api/v1/jobs', async (req, res) => {
     })
   }
 
+  if (dependsOn.length) {
+    // Recheck after the dependent row exists to close the race where a parent
+    // completes between dependency validation and job creation.
+    const dependencyJobs = await prisma.job.findMany({
+      where: { id: { in: dependsOn }, projectId },
+      select: { id: true, status: true },
+    })
+    const invalidDependency = dependencyJobs.find(
+      dependency => ['FAILED', 'CANCELLED'].includes(dependency.status),
+    )
+
+    if (dependencyJobs.length !== dependsOn.length || invalidDependency) {
+      const message = invalidDependency
+        ? 'A dependency failed before this job could be scheduled'
+        : 'A dependency no longer exists in this project'
+
+      await prisma.$transaction(async tx => {
+        await tx.job.update({
+          where: { id: job.id },
+          data: {
+            status: 'CANCELLED',
+            completedAt: new Date(),
+            errorMessage: message,
+          },
+        })
+        await tx.jobEvent.create({
+          data: {
+            jobId: job.id,
+            eventType: 'CANCELLED',
+            message,
+            metadata: invalidDependency ? { dependencyJobId: invalidDependency.id } : {},
+          },
+        })
+      })
+
+      return res.status(409).json({
+        error: { message, jobId: job.id },
+      })
+    }
+
+    const ready = dependencyJobs.every(
+      dependency => dependency.status === 'COMPLETED',
+    )
+
+    if (!ready) {
+      return res.status(202).json({
+        data: job,
+        meta: {
+          mode: 'database+dependencies',
+          waitingForDependencies: true,
+        },
+      })
+    }
+  }
+
   try {
     await queue.add(
       type,
@@ -408,7 +514,7 @@ app.post('/api/v1/jobs', async (req, res) => {
 
     return res.status(202).json({
       data: job,
-      meta: { mode: 'database+redis' },
+      meta: { mode: 'database+redis', waitingForDependencies: false },
     })
   } catch (error) {
     console.error('[jobs:create:queue]', error)
@@ -712,6 +818,49 @@ app.post('/api/v1/jobs/:id/retry', async (req, res) => {
           message: `Job manually queued for retry generation ${updatedJob.retryGeneration}`,
         },
       })
+
+      const pendingIds = [jobId]
+      const visitedIds = new Set([jobId])
+
+      while (pendingIds.length) {
+        const dependencyJobId = pendingIds.shift()
+        const links = await tx.jobDependency.findMany({
+          where: { dependencyJobId },
+          select: { dependentJobId: true },
+        })
+
+        for (const link of links) {
+          const dependentJobId = link.dependentJobId
+          if (visitedIds.has(dependentJobId)) continue
+          visitedIds.add(dependentJobId)
+
+          const dependentJob = await tx.job.findUnique({
+            where: { id: dependentJobId },
+          })
+
+          if (
+            dependentJob?.status === 'CANCELLED' &&
+            dependentJob.errorMessage?.startsWith('Dependency ')
+          ) {
+            await tx.job.update({
+              where: { id: dependentJobId },
+              data: {
+                status: 'QUEUED',
+                errorMessage: null,
+                completedAt: null,
+              },
+            })
+            await tx.jobEvent.create({
+              data: {
+                jobId: dependentJobId,
+                eventType: 'QUEUED',
+                message: 'Job re-queued because its dependency is being retried',
+              },
+            })
+            pendingIds.push(dependentJobId)
+          }
+        }
+      }
 
       return { job: updatedJob }
     })

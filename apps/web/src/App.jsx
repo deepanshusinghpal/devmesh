@@ -47,6 +47,8 @@ function App() {
   const [metrics, setMetrics] = useState(null)
   const [health, setHealth] = useState(null)
   const [executionEvents, setExecutionEvents] = useState([])
+  const [workflows, setWorkflows] = useState([])
+  const [loadingWorkflows, setLoadingWorkflows] = useState(false)
   const [loadingEvents, setLoadingEvents] = useState(false)
   const [loadingJobs, setLoadingJobs] = useState(true)
   const [projectId, setProjectId] = useState('')
@@ -185,6 +187,34 @@ useEffect(() => {
   }
 }, [])
 
+// Fetch workflow templates for the selected project.
+useEffect(() => {
+  if (activeNav !== 'Workflows' || !projectId) return
+
+  let cancelled = false
+
+  async function loadWorkflows() {
+    setLoadingWorkflows(true)
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/workflows?projectId=${encodeURIComponent(projectId)}`,
+        { cache: 'no-store' },
+      )
+      if (!response.ok) throw new Error('Could not load workflow templates')
+      const result = await response.json()
+      if (!cancelled) setWorkflows(result.data)
+    } catch (error) {
+      console.error('Failed to load workflow templates:', error)
+      if (!cancelled) setWorkflows([])
+    } finally {
+      if (!cancelled) setLoadingWorkflows(false)
+    }
+  }
+
+  void loadWorkflows()
+  return () => { cancelled = true }
+}, [activeNav, projectId])
+
 // Load the event feed only while the execution logs page is open.
 // Keep the system banner tied to the actual API readiness check.
 useEffect(() => {
@@ -300,6 +330,26 @@ useEffect(() => {
   const [statusFilter, setStatusFilter] = useState('All statuses')
 
   const [showCreate, setShowCreate] = useState(false)
+  const [showCreateWorkflow, setShowCreateWorkflow] = useState(false)
+  const [workflowName, setWorkflowName] = useState('')
+  const [workflowDescription, setWorkflowDescription] = useState('')
+  const [workflowSteps, setWorkflowSteps] = useState(`[
+  {
+    "name": "Prepare input",
+    "type": "file.process",
+    "payload": { "text": "Prepare this sample input" }
+  },
+  {
+    "name": "Generate report",
+    "type": "report.generate",
+    "payload": {
+      "records": [
+        { "name": "Ada", "score": 95 },
+        { "name": "Lin", "score": 88 }
+      ]
+    }
+  }
+]`)
 
   const [jobName, setJobName] = useState('')
 
@@ -407,6 +457,71 @@ async function createJob(event) {
 
 
 
+
+async function createWorkflow(event) {
+  event.preventDefault()
+  if (!projectId) {
+    notify('No project is available. Run npm run db:seed, then restart the API.')
+    return
+  }
+
+  let steps
+  try {
+    steps = JSON.parse(workflowSteps)
+  } catch {
+    notify('Workflow steps must be valid JSON')
+    return
+  }
+
+  if (!Array.isArray(steps)) {
+    notify('Workflow steps must be a JSON array')
+    return
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/workflows`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: workflowName.trim(),
+        description: workflowDescription.trim(),
+        projectId,
+        steps,
+      }),
+    })
+    const result = await response.json()
+    if (!response.ok) {
+      throw new Error(result.error?.message || 'Could not save workflow')
+    }
+
+    setWorkflows(current => [result.data, ...current])
+    setWorkflowName('')
+    setWorkflowDescription('')
+    setShowCreateWorkflow(false)
+    notify('Workflow template saved')
+  } catch (error) {
+    console.error('Create workflow failed:', error)
+    notify(error.message || 'Could not save workflow')
+  }
+}
+
+async function runWorkflow(workflowId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/workflows/${workflowId}/run`, {
+      method: 'POST',
+    })
+    const result = await response.json()
+    if (!response.ok) {
+      throw new Error(result.error?.message || 'Could not run workflow')
+    }
+
+    notify(`Workflow started with ${result.data.jobs.length} dependent jobs`)
+    setActiveNav('Jobs')
+  } catch (error) {
+    console.error('Run workflow failed:', error)
+    notify(error.message || 'Could not run workflow')
+  }
+}
 
   const navGroups = [
 
@@ -826,20 +941,35 @@ async function createJob(event) {
 
           {activeNav === 'Workflows' && (
             <section className="panel jobs-panel">
-              <div className="panel-heading">
+              <div className="panel-heading jobs-heading">
                 <div>
                   <h2>Workflow templates</h2>
-                  <p>Dependency-based job chaining is available; saved workflow templates are not enabled yet.</p>
+                  <p>Save a reusable sequence of jobs and run it with dependency-aware scheduling.</p>
                 </div>
-              </div>
-              <div className="chart-placeholder">
-                DevMesh currently supports queueing, retries, cancellation, results, and execution history for individual jobs. Job dependencies can chain individual jobs. Saved workflow templates and run-level management are not implemented yet.
-              </div>
-              <div className="modal-actions">
-                <button className="primary-button" onClick={() => { setActiveNav('Jobs'); setShowCreate(true) }}>
-                  <Plus size={15} /> Create a job instead
+                <button className="primary-button" onClick={() => setShowCreateWorkflow(true)} disabled={!projectId}>
+                  <Plus size={15} /> New workflow
                 </button>
               </div>
+              {loadingWorkflows ? (
+                <div className="chart-placeholder">Loading workflow templates…</div>
+              ) : workflows.length ? (
+                <div className="worker-bars">
+                  {workflows.map(workflow => (
+                    <div className="job-details-record" key={workflow.id}>
+                      <strong>{workflow.name}</strong>
+                      <p>{workflow.description || 'No description provided.'}</p>
+                      <p>{Array.isArray(workflow.steps) ? workflow.steps.length : 0} sequential steps</p>
+                      <button className="secondary-button" onClick={() => runWorkflow(workflow.id)}>
+                        <Zap size={14} /> Run workflow
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="chart-placeholder">
+                  {projectId ? 'No workflow templates yet. Create one to run a multi-step job chain.' : 'No project is available. Run npm run db:seed, then restart the API.'}
+                </div>
+              )}
             </section>
           )}
 
@@ -1219,6 +1349,29 @@ async function createJob(event) {
       </div>}
 
 
+
+      {showCreateWorkflow && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setShowCreateWorkflow(false) }}>
+        <form className="create-modal" onSubmit={createWorkflow}>
+          <div className="modal-header">
+            <div>
+              <div className="modal-icon"><Workflow size={19}/></div>
+              <h2>Create workflow template</h2>
+              <p>Each step starts after the previous step completes successfully.</p>
+            </div>
+            <button type="button" className="icon-button" onClick={() => setShowCreateWorkflow(false)} aria-label="Close dialog"><X size={18}/></button>
+          </div>
+
+          <label className="form-label">Workflow name<input autoFocus value={workflowName} onChange={e => setWorkflowName(e.target.value)} placeholder="e.g. Process and report" required maxLength={100}/></label>
+          <label className="form-label">Description (optional)<input value={workflowDescription} onChange={e => setWorkflowDescription(e.target.value)} placeholder="What this workflow does" maxLength={500}/></label>
+          <label className="form-label">Steps (JSON array)<textarea className="payload-editor" value={workflowSteps} onChange={e => setWorkflowSteps(e.target.value)} rows={12} spellCheck={false} required /></label>
+          <p className="payload-help">Use 1–20 steps. Each step needs a name and supported type; payload examples are included above.</p>
+          <div className="demo-notice"><Workflow size={15}/><span>Workflow steps run in order. A failed step cancels downstream steps.</span></div>
+          <div className="modal-actions">
+            <button type="button" className="secondary-button" onClick={() => setShowCreateWorkflow(false)}>Cancel</button>
+            <button type="submit" className="primary-button"><Plus size={15}/> Save template</button>
+          </div>
+        </form>
+      </div>}
 
       {toast && <div className="toast"><Check size={16}/>{toast}</div>}
 

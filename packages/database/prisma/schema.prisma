@@ -38,6 +38,7 @@ model Project {
   ownerId   String
   owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   jobs      Job[]
+  workflows Workflow[]
   createdAt DateTime @default(now())
 
   @@index([ownerId])
@@ -90,10 +91,16 @@ model JobAttempt {
 }
 
 model Workflow {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name        String
   description String?
-  createdAt   DateTime @default(now())
+  steps       Json      @default("[]")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([projectId, createdAt])
 }
 
 model JobDependency {

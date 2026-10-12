@@ -18,6 +18,50 @@ const connection = new IORedis(
   { maxRetriesPerRequest: null },
 )
 
+async function processJob(job) {
+  const payload =
+    job.payload && typeof job.payload === 'object'
+      ? job.payload
+      : {}
+
+  switch (job.type) {
+    case 'file.process': {
+      const text =
+        typeof payload.text === 'string'
+          ? payload.text
+          : job.name
+
+      if (!text.trim()) {
+        throw new Error(
+          'File processing requires non-empty text in payload.text',
+        )
+      }
+
+      const normalizedText = text.replace(/\r\n/g, '\n')
+      const trimmedText = normalizedText.trim()
+
+      return {
+        type: 'file.process',
+        inputType: typeof payload.text === 'string' ? 'payload.text' : 'job.name',
+        characterCount: text.length,
+        wordCount: trimmedText
+          ? trimmedText.split(/\s+/).length
+          : 0,
+        lineCount: normalizedText.split('\n').length,
+        preview: text.slice(0, 200),
+        processedAt: new Date().toISOString(),
+      }
+    }
+
+    default:
+      return {
+        type: job.type,
+        accepted: true,
+        message: 'Business handler is not implemented yet.',
+      }
+  }
+}
+
 const worker = new Worker(
   'devmesh-jobs',
   async queueJob => {
@@ -61,12 +105,7 @@ const worker = new Worker(
     console.log(`[worker] processing ${jobId}: ${job.name}`)
 
     try {
-      // Temporary handler: real business-task handlers come next.
-      const result = {
-        accepted: true,
-        message: 'Worker execution verified; task handler is pending.',
-        type: job.type,
-      }
+      const result = await processJob(job)
 
       const finishedAt = new Date()
       const durationMs = finishedAt.getTime() - startedAt.getTime()

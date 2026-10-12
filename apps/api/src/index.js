@@ -82,6 +82,39 @@ app.get('/api/v1/projects', async (_req, res) => {
   }
 })
 
+// Return recent execution events for the log viewer.
+app.get('/api/v1/events', async (req, res) => {
+  res.set('Cache-Control', 'no-store')
+  const parsedLimit = z.coerce.number().int().min(1).max(100).safeParse(
+    req.query.limit ?? 50,
+  )
+
+  if (!parsedLimit.success) {
+    return res.status(400).json({
+      error: { message: 'limit must be an integer between 1 and 100' },
+    })
+  }
+
+  try {
+    const events = await prisma.jobEvent.findMany({
+      take: parsedLimit.data,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        job: {
+          select: { id: true, name: true, type: true, status: true },
+        },
+      },
+    })
+
+    return res.json({ data: events })
+  } catch (error) {
+    console.error('[events:list]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to fetch execution events' },
+    })
+  }
+})
+
 // Return metrics backed by PostgreSQL, BullMQ, and worker heartbeats.
 async function getLiveWorkers() {
   const keys = []

@@ -13,7 +13,7 @@
     "build": "npm run build --workspace @devmesh/web && npm run build --workspace @devmesh/api && npm run build --workspace @devmesh/worker",
     "db:generate": "npm run db:generate --workspace @devmesh/database",
     "db:migrate": "npm run db:migrate --workspace @devmesh/database",
-    "test": "node --test apps/worker/test/*.test.js",
+    "test": "node --test apps/worker/test/*.test.js apps/api/test/*.test.js",
     "db:seed": "npm run db:seed --workspace @devmesh/database"
   }
 }

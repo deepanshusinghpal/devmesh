@@ -48,7 +48,7 @@ function App() {
   const [projectId, setProjectId] = useState('')
   const [selectedJob, setSelectedJob] = useState(null)
   const inputInitializedFor = useRef(null)
-  const [editedJobText, setEditedJobText] = useState('')
+  const [editedJobPayload, setEditedJobPayload] = useState('')
 const [savingJobInput, setSavingJobInput] = useState(false)
   const [jobDetails, setJobDetails] = useState(null)
   const [loadingJobDetails, setLoadingJobDetails] = useState(false)
@@ -202,10 +202,8 @@ useEffect(() => {
   setJobDetails(result.data)
 
   if (inputInitializedFor.current !== result.data.id) {
-    setEditedJobText(
-      typeof result.data.payload?.text === 'string'
-        ? result.data.payload.text
-        : ''
+    setEditedJobPayload(
+      JSON.stringify(result.data.payload ?? {}, null, 2)
     )
 
     inputInitializedFor.current = result.data.id
@@ -831,17 +829,37 @@ async function createJob(event) {
   <h3>Input</h3>
 
   <textarea
-    value={editedJobText}
-    onChange={event => setEditedJobText(event.target.value)}
-    placeholder="Enter text to process..."
-    rows={6}
+    value={editedJobPayload}
+    onChange={event => setEditedJobPayload(event.target.value)}
+    placeholder="Edit the full job payload as JSON..."
+    rows={8}
+    spellCheck={false}
+    readOnly={jobDetails.status !== 'FAILED'}
+    aria-label="Job input payload as JSON"
   />
 
   <button
     type="button"
     className="secondary-button"
-    disabled={savingJobInput || !editedJobText.trim()}
+    disabled={savingJobInput || jobDetails.status !== 'FAILED' || !editedJobPayload.trim()}
     onClick={async () => {
+      let parsedPayload
+      try {
+        parsedPayload = JSON.parse(editedJobPayload)
+      } catch {
+        notify('Input must be valid JSON')
+        return
+      }
+
+      if (
+        parsedPayload === null ||
+        typeof parsedPayload !== 'object' ||
+        Array.isArray(parsedPayload)
+      ) {
+        notify('Input JSON must be an object')
+        return
+      }
+
       setSavingJobInput(true)
 
       try {
@@ -852,7 +870,7 @@ async function createJob(event) {
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ text: editedJobText }),
+            body: JSON.stringify({ payload: parsedPayload }),
           },
         )
 
@@ -881,7 +899,6 @@ async function createJob(event) {
     {savingJobInput ? 'Saving...' : 'Save Input'}
   </button>
 
-  <pre>{JSON.stringify(jobDetails.payload, null, 2)}</pre>
 </div>
 
 

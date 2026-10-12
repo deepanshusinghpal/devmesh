@@ -6,6 +6,7 @@ import cors from 'cors'
 import express from 'express'
 import { z } from 'zod'
 import { validateJobPayload } from './job-validation.js'
+import { validateWorkflowSteps } from './workflow-validation.js'
 import { Queue } from 'bullmq'
 import IORedis from 'ioredis'
 
@@ -78,6 +79,249 @@ app.get('/api/v1/projects', async (_req, res) => {
     console.error('[projects:list]', error)
     return res.status(500).json({
       error: { message: 'Unable to fetch projects' },
+    })
+  }
+})
+
+const workflowStepSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  type: z.enum(['file.process', 'report.generate', 'notification.send', 'catalog.sync']),
+  payload: z.record(z.string(), z.unknown()).optional(),
+  priority: z.enum(['LOW', 'NORMAL', 'HIGH']).optional(),
+})
+
+const createWorkflowSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).optional(),
+  projectId: z.string().min(1),
+  steps: z.array(workflowStepSchema).min(1).max(20),
+})
+
+// List saved workflow templates for a project.
+app.get('/api/v1/workflows', async (req, res) => {
+  res.set('Cache-Control', 'no-store')
+  const parsedProjectId = z.string().min(1).safeParse(req.query.projectId)
+
+  if (!parsedProjectId.success) {
+    return res.status(400).json({
+      error: { message: 'projectId query parameter is required' },
+    })
+  }
+
+  try {
+    const workflows = await prisma.workflow.findMany({
+      where: { projectId: parsedProjectId.data },
+      orderBy: { updatedAt: 'desc' },
+    })
+    return res.json({ data: workflows })
+  } catch (error) {
+    console.error('[workflows:list]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to fetch workflow templates' },
+    })
+  }
+})
+
+// Save a reusable sequence of dependent jobs.
+app.post('/api/v1/workflows', async (req, res) => {
+  const parsed = createWorkflowSchema.safeParse(req.body)
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid workflow template',
+        details: parsed.error.flatten(),
+      },
+    })
+  }
+
+  const payloadError = validateWorkflowSteps(parsed.data.steps.map(step => ({
+    ...step,
+    payload: step.payload ?? {},
+    priority: step.priority ?? 'NORMAL',
+  })))
+
+  if (payloadError) {
+    return res.status(400).json({
+      error: { code: 'VALIDATION_ERROR', message: payloadError },
+    })
+  }
+
+  try {
+    const project = await prisma.project.findUnique({
+      where: { id: parsed.data.projectId },
+      select: { id: true },
+    })
+
+    if (!project) {
+      return res.status(404).json({
+        error: { message: 'Project not found' },
+      })
+    }
+
+    const steps = parsed.data.steps.map(step => ({
+      name: step.name.trim(),
+      type: step.type,
+      payload: step.payload ?? {},
+      priority: step.priority ?? 'NORMAL',
+    }))
+
+    const workflow = await prisma.workflow.create({
+      data: {
+        name: parsed.data.name,
+        description: parsed.data.description || null,
+        projectId: project.id,
+        steps,
+      },
+    })
+
+    return res.status(201).json({ data: workflow })
+  } catch (error) {
+    console.error('[workflows:create]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to save workflow template' },
+    })
+  }
+})
+
+// Execute a saved workflow as a linear chain of dependent jobs.
+app.post('/api/v1/workflows/:id/run', async (req, res) => {
+  try {
+    const workflow = await prisma.workflow.findUnique({
+      where: { id: req.params.id },
+    })
+
+    if (!workflow) {
+      return res.status(404).json({
+        error: { message: 'Workflow template not found' },
+      })
+    }
+
+    if (!workflow.projectId) {
+      return res.status(409).json({
+        error: { message: 'This legacy workflow has no project; save a new template' },
+      })
+    }
+
+    const payloadError = validateWorkflowSteps(workflow.steps)
+    if (payloadError) {
+      return res.status(409).json({
+        error: { message: 'Workflow template is invalid', details: payloadError },
+      })
+    }
+
+    const steps = workflow.steps
+    const jobs = await prisma.$transaction(async tx => {
+      const createdJobs = []
+      let previousJobId = null
+
+      for (const [index, step] of steps.entries()) {
+        const job = await tx.job.create({
+          data: {
+            name: (workflow.name + ': ' + step.name).slice(0, 100),
+            type: step.type,
+            projectId: workflow.projectId,
+            payload: step.payload ?? {},
+            priority: step.priority ?? 'NORMAL',
+            status: 'QUEUED',
+            ...(previousJobId
+              ? {
+                  dependencies: {
+                    create: {
+                      dependencyJob: { connect: { id: previousJobId } },
+                    },
+                  },
+                }
+              : {}),
+            events: {
+              create: {
+                eventType: 'QUEUED',
+                message: 'Workflow step ' + (index + 1) + '/' + steps.length + ' created',
+                metadata: { workflowId: workflow.id, stepIndex: index },
+              },
+            },
+          },
+        })
+
+        createdJobs.push(job)
+        previousJobId = job.id
+      }
+
+      return createdJobs
+    })
+
+    const firstJob = jobs[0]
+    try {
+      await queue.add(
+        firstJob.type,
+        { jobId: firstJob.id },
+        {
+          jobId: firstJob.id,
+          attempts: firstJob.maxAttempts,
+          backoff: { type: 'exponential', delay: 1000 },
+        },
+      )
+    } catch (queueError) {
+      console.error('[workflows:run:queue]', queueError)
+      await prisma.$transaction(async tx => {
+        await tx.job.update({
+          where: { id: firstJob.id },
+          data: {
+            status: 'FAILED',
+            completedAt: new Date(),
+            errorMessage: 'Unable to enqueue workflow',
+          },
+        })
+        await tx.jobEvent.create({
+          data: {
+            jobId: firstJob.id,
+            eventType: 'FAILED',
+            message: 'Unable to enqueue workflow',
+          },
+        })
+
+        for (const blockedJob of jobs.slice(1)) {
+          await tx.job.update({
+            where: { id: blockedJob.id },
+            data: {
+              status: 'CANCELLED',
+              completedAt: new Date(),
+              errorMessage: 'Dependency ' + firstJob.id + ' failed',
+            },
+          })
+          await tx.jobEvent.create({
+            data: {
+              jobId: blockedJob.id,
+              eventType: 'CANCELLED',
+              message: 'Workflow was not started because its first job could not be queued',
+            },
+          })
+        }
+      })
+
+      return res.status(503).json({
+        error: { message: 'Workflow was saved but could not be queued' },
+      })
+    }
+
+    return res.status(202).json({
+      data: {
+        workflowId: workflow.id,
+        jobs: jobs.map((job, index) => ({
+          id: job.id,
+          name: job.name,
+          type: job.type,
+          status: job.status,
+          step: index + 1,
+        })),
+      },
+      meta: { mode: 'database+redis', stepCount: jobs.length },
+    })
+  } catch (error) {
+    console.error('[workflows:run]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to run workflow' },
     })
   }
 })

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import cors from 'cors'
 import express from 'express'
 import { z } from 'zod'
+import { validateJobPayload } from './job-validation.js'
 import { Queue } from 'bullmq'
 import IORedis from 'ioredis'
 
@@ -277,11 +278,23 @@ app.post('/api/v1/jobs', async (req, res) => {
     })
   }
 
+  const payload = parsed.data.payload ?? {}
+  const payloadError = validateJobPayload(parsed.data.type, payload)
+
+  if (payloadError) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Invalid job payload',
+        details: payloadError,
+      },
+    })
+  }
+
   const {
     name,
     type,
     projectId,
-    payload = {},
     priority = 'NORMAL',
   } = parsed.data
 
@@ -378,11 +391,25 @@ app.post('/api/v1/jobs', async (req, res) => {
 
 app.patch('/api/v1/jobs/:id/input', async (req, res) => {
   const jobId = req.params.id
-  const { text } = req.body ?? {}
+  const { payload: requestedPayload, text } = req.body ?? {}
 
-  if (typeof text !== 'string' || !text.trim()) {
+  if (
+    requestedPayload !== undefined &&
+    (requestedPayload === null ||
+      typeof requestedPayload !== 'object' ||
+      Array.isArray(requestedPayload))
+  ) {
     return res.status(400).json({
-      error: { message: 'Input text must not be empty' },
+      error: { message: 'Input payload must be a JSON object' },
+    })
+  }
+
+  if (
+    requestedPayload === undefined &&
+    (typeof text !== 'string' || !text.trim())
+  ) {
+    return res.status(400).json({
+      error: { message: 'Input must be a JSON object or non-empty text' },
     })
   }
 
@@ -412,12 +439,24 @@ app.patch('/api/v1/jobs/:id/input', async (req, res) => {
       !Array.isArray(existingJob.payload)
         ? existingJob.payload
         : {}
+    const nextPayload = requestedPayload ?? { ...oldPayload, text }
+    const payloadError = validateJobPayload(existingJob.type, nextPayload)
+
+    if (payloadError) {
+      return res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid job payload',
+          details: payloadError,
+        },
+      })
+    }
 
     const updatedJob = await prisma.$transaction(async tx => {
       const updated = await tx.job.update({
         where: { id: jobId },
         data: {
-          payload: { ...oldPayload, text },
+          payload: nextPayload,
         },
       })
 

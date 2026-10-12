@@ -1,64 +1,92 @@
 # DevMesh
 
-Distributed Job Orchestration & Execution Platform.
+**Distributed Job Orchestration & Execution Platform**
 
-This is the initial development scaffold. It includes a React dashboard with custom CSS, an Express API, a PostgreSQL schema, Redis/BullMQ worker scaffolding, and Docker Compose.
+DevMesh is a JavaScript-first monorepo for submitting, processing, retrying, and inspecting background jobs. It uses React + Vite for the dashboard, Express for the API, PostgreSQL with Prisma for durable job state, and Redis + BullMQ for queue execution.
 
-## Prerequisites
+## Current capabilities
 
-- Node.js 20+
-- npm
-- Docker Desktop with Docker Compose
+- Persist jobs, execution attempts, results, and event history in PostgreSQL.
+- Submit jobs to BullMQ and process them with a separate worker process.
+- Support `file.process`, `report.generate`, `catalog.sync`, and simulated `notification.send` handlers.
+- Retry failed jobs manually while preserving attempt history and protecting newer retry generations from stale queue executions.
+- Show job details, inputs, results, attempts, and the event timeline in the dashboard.
+- Expose live job, queue, and worker-heartbeat metrics through the API.
+- Run a workspace build in GitHub Actions for pull requests and pushes to `main`.
 
 ## Repository layout
 
-- `apps/web` — React + TypeScript + Vite dashboard
-- `apps/api` — Express + TypeScript API
-- `apps/worker` — BullMQ worker process
-- `packages/database` — Prisma schema and client
-- `docker-compose.yml` — PostgreSQL and Redis for local development
+- `apps/web` — React + Vite dashboard
+- `apps/api` — Express API and BullMQ queue producer
+- `apps/worker` — BullMQ worker and job handlers
+- `packages/database` — Prisma schema and generated client
+- `docker-compose.yml` — Local PostgreSQL and Redis services
 
-## Start the infrastructure
+## Prerequisites
 
-From the project root:
+- Node.js 22 (Node.js 20.19+ may also work with the current Vite release)
+- npm
+- Docker Desktop with Docker Compose
+
+## Run locally
+
+Run these commands from the repository root.
+
+### 1. Start PostgreSQL and Redis
 
 ```bash
 docker compose up -d postgres redis
 ```
 
-## Install dependencies
+### 2. Install dependencies and configure environment
 
 ```bash
-npm install
-```
-
-## Configure environment
-
-Copy `.env.example` to `.env` and update values if needed.
-
-```bash
+npm ci
 cp .env.example .env
 ```
 
-## Initialize the database
+Set `DATABASE_URL` and `REDIS_URL` in `.env` to match your local services. Keep secrets out of Git.
+
+### 3. Generate Prisma Client and apply migrations
 
 ```bash
 npm run db:generate
 npm run db:migrate
 ```
 
-## Run the applications
+### 4. Start the services
 
-In separate terminals:
+Use separate terminals from the repository root:
 
 ```bash
 npm run dev:api
-npm run dev:web
+```
+
+```bash
 npm run dev:worker
 ```
 
-The dashboard runs on `http://localhost:5173` and the API on `http://localhost:4000`.
+```bash
+npm run dev:web
+```
 
-## Current milestone
+The dashboard is available at `http://localhost:5173`, the API at `http://localhost:4000`, and the API health check at `http://localhost:4000/health`.
 
-The dashboard is an initial UI scaffold. The API currently exposes health and demo job endpoints; durable job creation, authentication, real queue processing, and deployment hardening will be implemented in subsequent milestones. Do not treat demo jobs as persisted production data yet.
+## API overview
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Check PostgreSQL and Redis connectivity |
+| GET | `/api/v1/jobs` | List recent persisted jobs |
+| GET | `/api/v1/jobs/:id` | Inspect a job, its attempts, and event history |
+| POST | `/api/v1/jobs` | Validate, persist, and enqueue a job |
+| PATCH | `/api/v1/jobs/:id/input` | Update input for a failed job before retry |
+| POST | `/api/v1/jobs/:id/retry` | Queue a new manual retry generation |
+| GET | `/api/v1/metrics` | Read job outcome, duration, queue, and worker metrics |
+
+## Important notes
+
+- `notification.send` is intentionally a local simulation. It does not send real emails or messages.
+- Worker availability is based on short-lived Redis heartbeats; the dashboard reports workers that have checked in recently.
+- The current API has no authentication or authorization layer. Do not expose it publicly or use it with sensitive production data until access control, secret handling, rate limiting, and deployment hardening are implemented.
+- The metrics endpoint reports lifetime job totals and the last 24 hours of completed/failed outcomes. Historical throughput charts and persistent time-series metrics are not implemented yet.

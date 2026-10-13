@@ -101,7 +101,7 @@ docker compose --profile app up --build -d
 docker compose ps
 ```
 
-Open the dashboard at `http://localhost:4173`. The API is available at `http://localhost:4000`.
+Open the dashboard at `http://localhost:4173`. The API is available at `http://localhost:4000`. Compose publishes the web, API, PostgreSQL, and Redis ports on loopback only, so other machines cannot reach these local development services by default.
 
 Useful commands:
 

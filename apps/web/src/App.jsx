@@ -18,7 +18,18 @@ function apiFetch(url, options = {}) {
   const token = sessionStorage.getItem('devmesh_token')
   const headers = new Headers(options.headers ?? {})
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  return fetch(url, { ...options, headers })
+
+  return fetch(url, { ...options, headers }).then(response => {
+    if (
+      response.status === 401 &&
+      token &&
+      !String(url).includes('/api/v1/auth/me')
+    ) {
+      sessionStorage.removeItem('devmesh_token')
+      window.dispatchEvent(new Event('devmesh:unauthenticated'))
+    }
+    return response
+  })
 }
 
 
@@ -51,6 +62,7 @@ const statusClass = {
 function App() {
   const [authToken, setAuthToken] = useState(() => sessionStorage.getItem('devmesh_token') ?? '')
   const [authUser, setAuthUser] = useState(null)
+  const [authChecking, setAuthChecking] = useState(() => Boolean(sessionStorage.getItem('devmesh_token')))
   const [authMode, setAuthMode] = useState('login')
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
@@ -79,12 +91,27 @@ const [savingJobInput, setSavingJobInput] = useState(false)
 
 
 useEffect(() => {
+  function handleUnauthenticated() {
+    setAuthToken('')
+    setAuthUser(null)
+    setProjectId('')
+    setSelectedJob(null)
+    setJobDetails(null)
+  }
+
+  window.addEventListener('devmesh:unauthenticated', handleUnauthenticated)
+  return () => window.removeEventListener('devmesh:unauthenticated', handleUnauthenticated)
+}, [])
+
+useEffect(() => {
   if (!authToken) {
     setAuthUser(null)
+    setAuthChecking(false)
     return
   }
 
   let cancelled = false
+  setAuthChecking(true)
   async function loadCurrentUser() {
     try {
       const response = await apiFetch(`${API_BASE_URL}/api/v1/auth/me`, { cache: 'no-store' })
@@ -97,6 +124,8 @@ useEffect(() => {
         setAuthToken('')
         setAuthUser(null)
       }
+    } finally {
+      if (!cancelled) setAuthChecking(false)
     }
   }
 
@@ -622,6 +651,7 @@ async function runWorkflow(workflowId) {
       sessionStorage.setItem('devmesh_token', result.data.token)
       setAuthToken(result.data.token)
       setAuthUser(result.data.user)
+      setAuthChecking(true)
       setAuthPassword('')
       setProjectId('')
     } catch (error) {
@@ -635,6 +665,7 @@ async function runWorkflow(workflowId) {
     sessionStorage.removeItem('devmesh_token')
     setAuthToken('')
     setAuthUser(null)
+    setAuthChecking(false)
     setJobs([])
     setMetrics(null)
     setProjectId('')
@@ -642,6 +673,10 @@ async function runWorkflow(workflowId) {
     setJobDetails(null)
     setWorkflows([])
     setExecutionEvents([])
+  }
+
+  if (authChecking) {
+    return <main className="auth-screen"><p className="auth-description">Checking your session…</p></main>
   }
 
   if (!authToken || !authUser) {

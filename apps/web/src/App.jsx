@@ -1500,31 +1500,64 @@ async function runWorkflow(workflowId) {
 
 
 
-      {showCreate && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setShowCreate(false) }}>
+      {showCreate && <div className="modal-backdrop job-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setShowCreate(false) }}>
+        <form className="create-modal create-job-modal" onSubmit={createJob} aria-labelledby="create-job-title">
+          <div className="modal-header job-modal-header">
+            <div>
+              <div className="modal-icon"><Plus size={19}/></div>
+              <h2 id="create-job-title">Create a job</h2>
+              <p>Configure a task and send it to your worker queue.</p>
+            </div>
+            <button type="button" className="icon-button" onClick={() => setShowCreate(false)} aria-label="Close dialog"><X size={18}/></button>
+          </div>
 
-        <form className="create-modal" onSubmit={createJob}>
+          <div className="job-form-grid">
+            <label className="form-label job-name-field">Job name
+              <input autoFocus value={jobName} onChange={e => setJobName(e.target.value)} placeholder="e.g. Process monthly report" required maxLength={100}/>
+            </label>
+            <label className="form-label">Job type
+              <select value={jobType} onChange={e => { const type = e.target.value; setJobType(type); setJobPayload(type === 'report.generate' ? '{\n  "records": [\n    { "name": "Ada", "score": 95 },\n    { "name": "Lin", "score": 88 },\n    { "name": "Grace", "score": 92 }\n  ]\n}' : type === 'catalog.sync' ? '{\n  "products": [\n    { "sku": "SKU-001", "name": "Keyboard", "price": 49.99 },\n    { "sku": "SKU-002", "name": "Mouse", "price": 19.99 }\n  ]\n}' : type === 'notification.send' ? '{\n  "to": "demo@example.com",\n  "message": "Your DevMesh job has completed"\n}' : '{\n  "text": "Hello from DevMesh"\n}') }}>
+                <option value="file.process">File processing</option>
+                <option value="report.generate">Report generation</option>
+                <option value="notification.send">Send notifications (simulated)</option>
+                <option value="catalog.sync">Catalog synchronization</option>
+              </select>
+            </label>
+          </div>
 
-          <div className="modal-header"><div><div className="modal-icon"><Plus size={19}/></div><h2>Create a job</h2><p>Submit a task to the DevMesh queue.</p></div><button type="button" className="icon-button" onClick={() => setShowCreate(false)} aria-label="Close dialog"><X size={18}/></button></div>
+          <div className="payload-field">
+            <div className="payload-heading">
+              <label htmlFor="job-payload">Job input <span>JSON</span></label>
+              <button type="button" className="payload-format-button" onClick={() => {
+                try {
+                  setJobPayload(JSON.stringify(JSON.parse(jobPayload), null, 2))
+                  notify('JSON formatted')
+                } catch {
+                  notify('Fix the JSON syntax before formatting')
+                }
+              }}>Format JSON</button>
+            </div>
+            <textarea id="job-payload" className="payload-editor" value={jobPayload} onChange={e => setJobPayload(e.target.value)} rows={5} spellCheck={false} required aria-describedby="job-payload-help" />
+            <p id="job-payload-help" className="payload-help">Provide a JSON object. Choose a job type to load a matching example.</p>
+          </div>
 
-          <label className="form-label">Job name<input autoFocus value={jobName} onChange={e => setJobName(e.target.value)} placeholder="e.g. Process monthly report" required maxLength={100}/></label>
+          <details className="job-advanced">
+            <summary><span>Advanced options</span><span className="advanced-summary-note">Dependencies · optional</span><ChevronDown size={15}/></summary>
+            <div className="advanced-content">
+              <label className="form-label">Depends on job IDs
+                <input value={jobDependencies} onChange={e => setJobDependencies(e.target.value)} placeholder="Paste one or more job IDs"/>
+              </label>
+              <p className="payload-help">This job waits for every listed job to complete successfully. If a prerequisite fails, dependent jobs are cancelled.</p>
+            </div>
+          </details>
 
-          <label className="form-label">Job type<select value={jobType} onChange={e => { const type = e.target.value; setJobType(type); setJobPayload(type === 'report.generate' ? '{\n  "records": [\n    { "name": "Ada", "score": 95 },\n    { "name": "Lin", "score": 88 },\n    { "name": "Grace", "score": 92 }\n  ]\n}' : type === 'catalog.sync' ? '{\n  "products": [\n    { "sku": "SKU-001", "name": "Keyboard", "price": 49.99 },\n    { "sku": "SKU-002", "name": "Mouse", "price": 19.99 }\n  ]\n}' : type === 'notification.send' ? '{\n  "to": "demo@example.com",\n  "message": "Your DevMesh job has completed"\n}' : '{\n  "text": "Hello from DevMesh"\n}') }}><option value="file.process">File processing</option><option value="report.generate">Report generation</option><option value="notification.send">Send notifications (simulated)</option><option value="catalog.sync">Catalog synchronization</option></select></label>
-
-          <label className="form-label">Job input (JSON)<textarea className="payload-editor" value={jobPayload} onChange={e => setJobPayload(e.target.value)} rows={8} spellCheck={false} required aria-describedby="job-payload-help" /></label>
-          <p id="job-payload-help" className="payload-help">Enter a JSON object for this job type. Report generation expects a records array; catalog sync expects a products array.</p>
-
-          <label className="form-label">Depends on job IDs (optional)<input value={jobDependencies} onChange={e => setJobDependencies(e.target.value)} placeholder="Paste job IDs separated by commas" /></label>
-          <p className="payload-help">This job waits until every listed job completes successfully. Failed prerequisites cancel downstream jobs.</p>
-
-          <div className="demo-notice"><Zap size={15}/><span>Jobs are submitted to the DevMesh queue for processing.</span></div>
-
-          <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>Cancel</button><button type="submit" className="primary-button"><Plus size={15}/> Create job</button></div>
-
+          <div className="demo-notice"><Zap size={15}/><span>Your task will be saved and queued for processing.</span></div>
+          <div className="modal-actions">
+            <button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>Cancel</button>
+            <button type="submit" className="primary-button"><Plus size={15}/> Create job</button>
+          </div>
         </form>
-
       </div>}
-
-
 
       {showCreateWorkflow && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setShowCreateWorkflow(false) }}>
         <form className="create-modal" onSubmit={createWorkflow}>

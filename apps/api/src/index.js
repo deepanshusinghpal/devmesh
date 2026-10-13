@@ -24,9 +24,17 @@ const { prisma } = await import('@devmesh/database')
 const app = express()
 const port = Number(process.env.API_PORT ?? 4000)
 const authTokenSecret = process.env.AUTH_TOKEN_SECRET ?? ''
+const localAuthSecretValues = new Set([
+  'devmesh-local-auth-secret-change-before-production-32',
+  'replace-with-a-random-secret-of-at-least-32-bytes',
+])
 
 if (Buffer.byteLength(authTokenSecret, 'utf8') < 32) {
   throw new Error('AUTH_TOKEN_SECRET must be configured with at least 32 bytes')
+}
+
+if (process.env.NODE_ENV === 'production' && localAuthSecretValues.has(authTokenSecret)) {
+  throw new Error('Replace the local/example AUTH_TOKEN_SECRET before production deployment')
 }
 
 const authMiddleware = createAuthMiddleware(authTokenSecret)

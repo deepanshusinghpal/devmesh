@@ -7,9 +7,23 @@ import {
   hashPassword,
   verifyAccessToken,
   verifyPassword,
+  validateAuthSecret,
 } from '../src/auth.js'
 
 const secret = 'test-only-secret-that-is-long-enough-for-hmac'
+
+test('authentication secret validation rejects weak and known production defaults', () => {
+  assert.throws(() => validateAuthSecret('short', 'development'), /at least 32 bytes/)
+  assert.throws(
+    () => validateAuthSecret('devmesh-local-auth-secret-change-before-production-32', 'production'),
+    /before production deployment/,
+  )
+  assert.throws(
+    () => validateAuthSecret('replace-with-a-random-secret-of-at-least-32-bytes', 'production'),
+    /before production deployment/,
+  )
+  assert.equal(validateAuthSecret(secret, 'production'), secret)
+})
 
 test('password hashes are salted and verify only the original password', async () => {
   const first = await hashPassword('correct horse battery staple')

@@ -19,6 +19,23 @@ function validSecret(secret) {
   return typeof secret === 'string' && Buffer.byteLength(secret, 'utf8') >= 32
 }
 
+const localAuthSecretValues = new Set([
+  'devmesh-local-auth-secret-change-before-production-32',
+  'replace-with-a-random-secret-of-at-least-32-bytes',
+])
+
+export function validateAuthSecret(secret, nodeEnv = process.env.NODE_ENV) {
+  if (!validSecret(secret)) {
+    throw new Error('AUTH_TOKEN_SECRET must be configured with at least 32 bytes')
+  }
+
+  if (nodeEnv === 'production' && localAuthSecretValues.has(secret)) {
+    throw new Error('Replace the local/example AUTH_TOKEN_SECRET before production deployment')
+  }
+
+  return secret
+}
+
 export async function hashPassword(password) {
   if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
     throw new TypeError('Password must be between 12 and 128 characters')

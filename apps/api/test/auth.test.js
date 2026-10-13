@@ -61,9 +61,10 @@ test('auth middleware attaches the identity from a valid bearer token', () => {
     json(body) { this.body = body; return this },
   }
   let identity = null
+  const request = { get: name => name === 'authorization' ? `Bearer ${token}` : undefined }
 
-  middleware({ get: name => name === 'authorization' ? `Bearer ${token}` : undefined }, response, req => {
-    identity = req.auth
+  middleware(request, response, () => {
+    identity = request.auth
   })
 
   assert.equal(identity.userId, 'user-2')

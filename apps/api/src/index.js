@@ -7,6 +7,7 @@ import express from 'express'
 import { z } from 'zod'
 import { validateJobPayload } from './job-validation.js'
 import { validateWorkflowSteps } from './workflow-validation.js'
+import { createRateLimiter, securityHeaders } from './security.js'
 import { Queue } from 'bullmq'
 import IORedis from 'ioredis'
 
@@ -33,11 +34,16 @@ const queue = new Queue('devmesh-jobs', {
   connection: redis,
 })
 
+app.disable('x-powered-by')
+app.use(securityHeaders)
 app.use(
   cors({
     origin: process.env.WEB_ORIGIN ?? 'http://localhost:5173',
   }),
 )
+// The dashboard polls several endpoints, so this limit allows normal use while
+// placing a ceiling on accidental loops and basic request floods.
+app.use('/api/v1', createRateLimiter())
 app.use(express.json({ limit: '256kb' }))
 
 // Health check: verify PostgreSQL and Redis.

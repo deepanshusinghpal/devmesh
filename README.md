@@ -19,6 +19,9 @@ DevMesh is a JavaScript-first monorepo for submitting, processing, retrying, and
 - Save workflow templates containing 1–20 job steps and run them as sequential dependency chains from the dashboard.
 - Show job details, inputs, results, attempts, and the event timeline in the dashboard.
 - Expose live job, queue, and worker-heartbeat metrics through the API.
+- Register and sign in with password hashing and short-lived signed access tokens.
+- Restrict project, job, workflow, event, and job-derived metric queries to the authenticated user's projects.
+- Apply baseline security headers and API request limits.
 - Browse a recent execution-event feed and inspect job status distribution from dedicated dashboard views.
 - Display live API/database/Redis readiness in the dashboard and gate the container dashboard startup on API health.
 - Run a workspace build in GitHub Actions for pull requests and pushes to `main`.
@@ -113,7 +116,10 @@ The named database and Redis volumes are preserved by `down`. Use `docker compos
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET | `/health` | Check PostgreSQL and Redis connectivity |
+| GET | `/health` | Check PostgreSQL and Redis connectivity (public readiness check) |
+| POST | `/api/v1/auth/register` | Create an account and its first project |
+| POST | `/api/v1/auth/login` | Sign in and receive a bearer access token |
+| GET | `/api/v1/auth/me` | Return the current authenticated account |
 | GET | `/api/v1/jobs` | List recent persisted jobs |
 | GET | `/api/v1/jobs/:id` | Inspect a job, its attempts, and event history |
 | POST | `/api/v1/jobs` | Validate, persist, and enqueue a job (optional `dependsOn` and `idempotencyKey`) |
@@ -130,6 +136,10 @@ The named database and Redis volumes are preserved by `down`. Use `docker compos
 
 - `notification.send` is intentionally a local simulation. It does not send real emails or messages.
 - Worker availability is based on short-lived Redis heartbeats; the dashboard reports workers that have checked in recently.
-- The current API has no authentication or authorization layer. The project-list endpoint and job endpoints are for local development only. Do not expose the API publicly or use it with sensitive production data until access control, secret handling, rate limiting, and deployment hardening are implemented.
-- The local seed creates a placeholder account with no login support. It is not a production user or password.
+- All `/api/v1` routes except registration and login require an `Authorization: Bearer <token>` header. Access tokens expire after eight hours. The health check remains public so container orchestration can verify readiness.
+- Passwords are hashed with scrypt and a random salt; the API never returns password hashes.
+- Project and job data endpoints enforce project ownership. Infrastructure queue and worker counts remain shared system metrics.
+- The Compose fallback `AUTH_TOKEN_SECRET` is for local development only. Before any shared or public deployment, set `AUTH_TOKEN_SECRET` to a strong random value of at least 32 bytes, replace all local database credentials, configure HTTPS, and review rate limiting for your hosting topology.
+- Access tokens are held in the browser session storage and are removed when the user signs out or closes the browser session. As with any browser-held bearer token, an XSS vulnerability could expose it; production deployments should add a stricter Content Security Policy and consider a secure HttpOnly cookie/session design.
+- The local seed creates a placeholder account with no login support. It remains separate from accounts created through registration.
 - The metrics endpoint reports lifetime job totals and the last 24 hours of completed/failed outcomes. Historical throughput charts and persistent time-series metrics are not implemented yet.

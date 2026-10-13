@@ -69,6 +69,7 @@ services:
       REDIS_URL: redis://redis:6379
       API_PORT: 4000
       WEB_ORIGIN: http://localhost:4173
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-devmesh-local-auth-secret-change-before-production-32}
     ports:
       - "4000:4000"
     healthcheck:

@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { validateJobPayload } from './job-validation.js'
 import { validateWorkflowSteps } from './workflow-validation.js'
 import { createRateLimiter, securityHeaders } from './security.js'
+import { createAuthMiddleware, createAccessToken, hashPassword, verifyPassword } from './auth.js'
 import { Queue } from 'bullmq'
 import IORedis from 'ioredis'
 
@@ -22,6 +23,13 @@ const { prisma } = await import('@devmesh/database')
 
 const app = express()
 const port = Number(process.env.API_PORT ?? 4000)
+const authTokenSecret = process.env.AUTH_TOKEN_SECRET ?? ''
+
+if (Buffer.byteLength(authTokenSecret, 'utf8') < 32) {
+  throw new Error('AUTH_TOKEN_SECRET must be configured with at least 32 bytes')
+}
+
+const authMiddleware = createAuthMiddleware(authTokenSecret)
 
 const redis = new IORedis(
   process.env.REDIS_URL ?? 'redis://localhost:6379',
@@ -70,12 +78,126 @@ app.get('/health', async (_req, res) => {
 })
 
 
+
+// Authentication routes are public; all other /api/v1 routes require a bearer token.
+const registerSchema = z.object({
+  email: z.string().trim().email().max(254),
+  displayName: z.string().trim().min(1).max(80),
+  password: z.string().min(12).max(128),
+})
+
+const loginSchema = z.object({
+  email: z.string().trim().email().max(254),
+  password: z.string().min(1).max(128),
+})
+
+app.use('/api/v1/auth', createRateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 20 }))
+
+app.post('/api/v1/auth/register', async (req, res) => {
+  const parsed = registerSchema.safeParse(req.body)
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Provide a valid email, display name, and password of 12–128 characters',
+      },
+    })
+  }
+
+  const email = parsed.data.email.toLowerCase()
+  try {
+    const passwordHash = await hashPassword(parsed.data.password)
+    const user = await prisma.user.create({
+      data: {
+        email,
+        displayName: parsed.data.displayName,
+        passwordHash,
+        projects: { create: { name: 'My First Project' } },
+      },
+      select: { id: true, email: true, displayName: true, createdAt: true },
+    })
+
+    const token = createAccessToken(user, authTokenSecret)
+    return res.status(201).json({ data: { user, token } })
+  } catch (error) {
+    if (error?.code === 'P2002') {
+      return res.status(409).json({
+        error: { code: 'EMAIL_IN_USE', message: 'An account with this email already exists' },
+      })
+    }
+
+    console.error('[auth:register]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to create account' },
+    })
+  }
+})
+
+app.post('/api/v1/auth/login', async (req, res) => {
+  const parsed = loginSchema.safeParse(req.body)
+  if (!parsed.success) {
+    return res.status(400).json({
+      error: { code: 'VALIDATION_ERROR', message: 'Provide a valid email and password' },
+    })
+  }
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { email: parsed.data.email.toLowerCase() },
+    })
+
+    const passwordMatches = await verifyPassword(parsed.data.password, user?.passwordHash)
+    if (!user || !passwordMatches) {
+      return res.status(401).json({
+        error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' },
+      })
+    }
+
+    const safeUser = {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      createdAt: user.createdAt,
+    }
+    const token = createAccessToken(safeUser, authTokenSecret)
+    return res.json({ data: { user: safeUser, token } })
+  } catch (error) {
+    console.error('[auth:login]', error)
+    return res.status(500).json({
+      error: { message: 'Unable to sign in' },
+    })
+  }
+})
+
+app.get('/api/v1/auth/me', authMiddleware, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.auth.userId },
+      select: { id: true, email: true, displayName: true, createdAt: true },
+    })
+
+    if (!user) {
+      return res.status(401).json({
+        error: { code: 'UNAUTHENTICATED', message: 'Sign in to access this resource' },
+      })
+    }
+
+    return res.json({ data: user })
+  } catch (error) {
+    console.error('[auth:me]', error)
+    return res.status(500).json({ error: { message: 'Unable to load account' } })
+  }
+})
+
+app.use('/api/v1', authMiddleware)
+
 // List workspace projects for the dashboard job creator.
 app.get('/api/v1/projects', async (_req, res) => {
   res.set('Cache-Control', 'no-store')
 
   try {
     const projects = await prisma.project.findMany({
+      where: { ownerId: req.auth.userId },
       select: { id: true, name: true, createdAt: true },
       orderBy: { createdAt: 'asc' },
     })
@@ -116,7 +238,10 @@ app.get('/api/v1/workflows', async (req, res) => {
 
   try {
     const workflows = await prisma.workflow.findMany({
-      where: { projectId: parsedProjectId.data },
+      where: {
+        projectId: parsedProjectId.data,
+        project: { is: { ownerId: req.auth.userId } },
+      },
       orderBy: { updatedAt: 'desc' },
     })
     return res.json({ data: workflows })
@@ -155,8 +280,8 @@ app.post('/api/v1/workflows', async (req, res) => {
   }
 
   try {
-    const project = await prisma.project.findUnique({
-      where: { id: parsed.data.projectId },
+    const project = await prisma.project.findFirst({
+      where: { id: parsed.data.projectId, ownerId: req.auth.userId },
       select: { id: true },
     })
 
@@ -194,8 +319,11 @@ app.post('/api/v1/workflows', async (req, res) => {
 // Execute a saved workflow as a linear chain of dependent jobs.
 app.post('/api/v1/workflows/:id/run', async (req, res) => {
   try {
-    const workflow = await prisma.workflow.findUnique({
-      where: { id: req.params.id },
+    const workflow = await prisma.workflow.findFirst({
+      where: {
+        id: req.params.id,
+        project: { is: { ownerId: req.auth.userId } },
+      },
     })
 
     if (!workflow) {
@@ -381,6 +509,7 @@ app.get('/api/v1/events', async (req, res) => {
 
   try {
     const events = await prisma.jobEvent.findMany({
+      where: { job: { project: { is: { ownerId: req.auth.userId } } } },
       take: parsedLimit.data,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -451,19 +580,33 @@ app.get('/api/v1/metrics', async (_req, res) => {
       queueCounts,
       workers,
     ] = await Promise.all([
-      prisma.job.count(),
+      prisma.job.count({
+        where: { project: { is: { ownerId: req.auth.userId } } },
+      }),
       prisma.job.groupBy({
         by: ['status'],
+        where: { project: { is: { ownerId: req.auth.userId } } },
         _count: { _all: true },
       }),
       prisma.job.count({
-        where: { status: 'COMPLETED', completedAt: { gte: since } },
+        where: {
+          status: 'COMPLETED',
+          completedAt: { gte: since },
+          project: { is: { ownerId: req.auth.userId } },
+        },
       }),
       prisma.job.count({
-        where: { status: 'FAILED', completedAt: { gte: since } },
+        where: {
+          status: 'FAILED',
+          completedAt: { gte: since },
+          project: { is: { ownerId: req.auth.userId } },
+        },
       }),
       prisma.jobAttempt.aggregate({
-        where: { durationMs: { not: null } },
+        where: {
+          durationMs: { not: null },
+          job: { project: { is: { ownerId: req.auth.userId } } },
+        },
         _avg: { durationMs: true },
       }),
       queue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed', 'paused'),
@@ -512,6 +655,7 @@ app.get('/api/v1/jobs', async (_req, res) => {
 
   try {
     const jobs = await prisma.job.findMany({
+      where: { project: { is: { ownerId: req.auth.userId } } },
       orderBy: { createdAt: 'desc' },
       take: 100,
     })
@@ -538,8 +682,11 @@ app.get('/api/v1/jobs/:id', async (req, res) => {
   res.set('Cache-Control', 'no-store')
 
   try {
-    const job = await prisma.job.findUnique({
-      where: { id: req.params.id },
+    const job = await prisma.job.findFirst({
+      where: {
+        id: req.params.id,
+        project: { is: { ownerId: req.auth.userId } },
+      },
       include: {
         attempts: {
           orderBy: { attempt: 'asc' },
@@ -636,6 +783,17 @@ app.post('/api/v1/jobs', async (req, res) => {
   let job
 
   try {
+    const ownedProject = await prisma.project.findFirst({
+      where: { id: projectId, ownerId: req.auth.userId },
+      select: { id: true },
+    })
+
+    if (!ownedProject) {
+      return res.status(404).json({
+        error: { message: 'Project not found' },
+      })
+    }
+
     if (idempotencyKey) {
       const existingJob = await prisma.job.findUnique({
         where: {
@@ -887,8 +1045,11 @@ app.patch('/api/v1/jobs/:id/input', async (req, res) => {
   }
 
   try {
-    const existingJob = await prisma.job.findUnique({
-      where: { id: jobId },
+    const existingJob = await prisma.job.findFirst({
+      where: {
+        id: jobId,
+        project: { is: { ownerId: req.auth.userId } },
+      },
     })
 
     if (!existingJob) {
@@ -962,8 +1123,11 @@ app.post('/api/v1/jobs/:id/cancel', async (req, res) => {
 
   try {
     const outcome = await prisma.$transaction(async tx => {
-      const existingJob = await tx.job.findUnique({
-        where: { id: jobId },
+      const existingJob = await tx.job.findFirst({
+        where: {
+          id: jobId,
+          project: { is: { ownerId: req.auth.userId } },
+        },
       })
 
       if (!existingJob) return { conflict: 'not-found' }
@@ -1058,8 +1222,11 @@ app.post('/api/v1/jobs/:id/retry', async (req, res) => {
         return { conflict: 'not-found' }
       }
 
-      const existingJob = await tx.job.findUnique({
-        where: { id: jobId },
+      const existingJob = await tx.job.findFirst({
+        where: {
+          id: jobId,
+          project: { is: { ownerId: req.auth.userId } },
+        },
       })
 
       if (!existingJob) {

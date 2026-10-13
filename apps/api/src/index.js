@@ -192,7 +192,7 @@ app.get('/api/v1/auth/me', authMiddleware, async (req, res) => {
 app.use('/api/v1', authMiddleware)
 
 // List workspace projects for the dashboard job creator.
-app.get('/api/v1/projects', async (_req, res) => {
+app.get('/api/v1/projects', async (req, res) => {
   res.set('Cache-Control', 'no-store')
 
   try {

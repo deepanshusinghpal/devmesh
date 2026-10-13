@@ -52,6 +52,24 @@ test('access tokens reject tampering, wrong secrets, malformed tokens, and expir
   assert.equal(verifyAccessToken(token, 'short', now), null)
 })
 
+test('auth middleware attaches the identity from a valid bearer token', () => {
+  const middleware = createAuthMiddleware(secret)
+  const token = createAccessToken({ id: 'user-2', email: 'second@example.com' }, secret)
+  const response = {
+    set() { return this },
+    status(code) { this.statusCode = code; return this },
+    json(body) { this.body = body; return this },
+  }
+  let identity = null
+
+  middleware({ get: name => name === 'authorization' ? `Bearer ${token}` : undefined }, response, req => {
+    identity = req.auth
+  })
+
+  assert.equal(identity.userId, 'user-2')
+  assert.equal(identity.email, 'second@example.com')
+})
+
 test('auth middleware requires a valid bearer token', () => {
   const middleware = createAuthMiddleware(secret)
   const response = {

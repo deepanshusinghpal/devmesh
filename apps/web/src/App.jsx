@@ -202,7 +202,7 @@ useEffect(() => {
     cancelled = true
     window.clearInterval(refreshInterval)
   }
-}, [])
+}, [authToken])
 
 // Refresh metrics from the API.
 useEffect(() => {
@@ -762,9 +762,9 @@ async function runWorkflow(workflowId) {
 
           <div className="profile-row">
 
-            <div className="profile-avatar">DP</div>
+            <div className="profile-avatar">{(authUser.displayName || authUser.email).slice(0, 2).toUpperCase()}</div>
 
-            <div className="profile-copy"><strong>Deepanshu</strong><span>Project owner</span></div>
+            <div className="profile-copy"><strong>{authUser.displayName}</strong><span>{authUser.email}</span></div>
 
             <Ellipsis size={19} className="muted-icon"/>
 
@@ -794,7 +794,8 @@ async function runWorkflow(workflowId) {
 
             <button className="icon-button notification-button" onClick={() => notify('You are all caught up')} aria-label="Notifications"><Bell size={17}/><i/></button>
 
-            <div className="top-avatar">DP</div>
+            <div className="top-avatar">{(authUser.displayName || authUser.email).slice(0, 2).toUpperCase()}</div>
+            <button className="icon-button" onClick={signOut} title="Sign out" aria-label="Sign out"><X size={16}/></button>
 
           </div>
 

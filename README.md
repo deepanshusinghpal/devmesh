@@ -57,7 +57,7 @@ npm ci
 cp .env.example .env
 ```
 
-The example database URL uses host port `5433`, matching `docker-compose.yml`. Set `DATABASE_URL`, `REDIS_URL`, `API_PORT`, `VITE_API_URL`, and `WEB_ORIGIN` in `.env` as needed. Keep secrets out of Git. The seed command creates a local demo owner and project so the dashboard can create jobs without a hard-coded database ID.
+The example database URL uses host port `5433`, matching `docker-compose.yml`. Set `DATABASE_URL`, `REDIS_URL`, `API_PORT`, `VITE_API_URL`, `WEB_ORIGIN`, and `AUTH_TOKEN_SECRET` in `.env` as needed. Generate a strong secret for `AUTH_TOKEN_SECRET` before using the app outside local development. Keep secrets out of Git. The seed command creates a local demo owner and project so the dashboard can create jobs without a hard-coded database ID.
 
 ### 3. Generate Prisma Client and apply migrations
 

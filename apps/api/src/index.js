@@ -566,7 +566,7 @@ async function getLiveWorkers() {
   })
 }
 
-app.get('/api/v1/metrics', async (_req, res) => {
+app.get('/api/v1/metrics', async (req, res) => {
   res.set('Cache-Control', 'no-store')
 
   try {
@@ -648,7 +648,7 @@ app.get('/api/v1/metrics', async (_req, res) => {
 })
 
 // List the latest jobs.
-app.get('/api/v1/jobs', async (_req, res) => {
+app.get('/api/v1/jobs', async (req, res) => {
   // Prevent the browser from reusing a cached jobs response.
   res.set('Cache-Control', 'no-store')
   res.set('Pragma', 'no-cache')

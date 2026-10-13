@@ -297,7 +297,7 @@ useEffect(() => {
 
   async function loadHealth() {
     try {
-      const response = await apiFetch(`${API_BASE_URL}/health`, { cache: 'no-store' })
+      const response = await fetch(`${API_BASE_URL}/health`, { cache: 'no-store' })
       const result = await response.json()
       if (!response.ok || result.status !== 'ok') {
         throw new Error(result.message || `Health check failed (HTTP ${response.status})`)

@@ -14,6 +14,24 @@ import {
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL || 'http://localhost:4000').replace(/\/$/, '')
 
+function apiFetch(url, options = {}) {
+  const token = sessionStorage.getItem('devmesh_token')
+  const headers = new Headers(options.headers ?? {})
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+
+  return fetch(url, { ...options, headers }).then(response => {
+    if (
+      response.status === 401 &&
+      token &&
+      !String(url).includes('/api/v1/auth/me')
+    ) {
+      sessionStorage.removeItem('devmesh_token')
+      window.dispatchEvent(new Event('devmesh:unauthenticated'))
+    }
+    return response
+  })
+}
+
 
 
 // const initialJobs = [
@@ -42,6 +60,15 @@ const statusClass = {
 
 
 function App() {
+  const [authToken, setAuthToken] = useState(() => sessionStorage.getItem('devmesh_token') ?? '')
+  const [authUser, setAuthUser] = useState(null)
+  const [authChecking, setAuthChecking] = useState(() => Boolean(sessionStorage.getItem('devmesh_token')))
+  const [authMode, setAuthMode] = useState('login')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authDisplayName, setAuthDisplayName] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [authLoading, setAuthLoading] = useState(false)
 
   const [jobs, setJobs] = useState(initialJobs)
   const [metrics, setMetrics] = useState(null)
@@ -64,11 +91,55 @@ const [savingJobInput, setSavingJobInput] = useState(false)
 
 
 useEffect(() => {
+  function handleUnauthenticated() {
+    setAuthToken('')
+    setAuthUser(null)
+    setProjectId('')
+    setSelectedJob(null)
+    setJobDetails(null)
+  }
+
+  window.addEventListener('devmesh:unauthenticated', handleUnauthenticated)
+  return () => window.removeEventListener('devmesh:unauthenticated', handleUnauthenticated)
+}, [])
+
+useEffect(() => {
+  if (!authToken) {
+    setAuthUser(null)
+    setAuthChecking(false)
+    return
+  }
+
+  let cancelled = false
+  setAuthChecking(true)
+  async function loadCurrentUser() {
+    try {
+      const response = await apiFetch(`${API_BASE_URL}/api/v1/auth/me`, { cache: 'no-store' })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error?.message || 'Session expired')
+      if (!cancelled) setAuthUser(result.data)
+    } catch {
+      if (!cancelled) {
+        sessionStorage.removeItem('devmesh_token')
+        setAuthToken('')
+        setAuthUser(null)
+      }
+    } finally {
+      if (!cancelled) setAuthChecking(false)
+    }
+  }
+
+  void loadCurrentUser()
+  return () => { cancelled = true }
+}, [authToken])
+
+useEffect(() => {
+  if (!authToken) return
   let cancelled = false
 
   async function loadProjects() {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/projects`, { cache: 'no-store' })
+      const response = await apiFetch(`${API_BASE_URL}/api/v1/projects`, { cache: 'no-store' })
       if (!response.ok) throw new Error('Could not load projects')
       const result = await response.json()
       if (!cancelled) setProjectId(result.data[0]?.id ?? '')
@@ -80,14 +151,15 @@ useEffect(() => {
 
   void loadProjects()
   return () => { cancelled = true }
-}, [])
+}, [authToken])
 
 useEffect(() => {
+  if (!authToken) return
   let cancelled = false
 
   async function loadJobs() {
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/jobs`,
       )
 
@@ -159,15 +231,16 @@ useEffect(() => {
     cancelled = true
     window.clearInterval(refreshInterval)
   }
-}, [])
+}, [authToken])
 
 // Refresh metrics from the API.
 useEffect(() => {
+  if (!authToken) return
   let cancelled = false
 
   async function loadMetrics() {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/metrics`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/v1/metrics`, {
         cache: 'no-store',
       })
 
@@ -187,18 +260,18 @@ useEffect(() => {
     cancelled = true
     window.clearInterval(intervalId)
   }
-}, [])
+}, [authToken])
 
 // Fetch workflow templates for the selected project.
 useEffect(() => {
-  if (activeNav !== 'Workflows' || !projectId) return
+  if (!authToken || activeNav !== 'Workflows' || !projectId) return
 
   let cancelled = false
 
   async function loadWorkflows() {
     setLoadingWorkflows(true)
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/workflows?projectId=${encodeURIComponent(projectId)}`,
         { cache: 'no-store' },
       )
@@ -215,7 +288,7 @@ useEffect(() => {
 
   void loadWorkflows()
   return () => { cancelled = true }
-}, [activeNav, projectId])
+}, [activeNav, projectId, authToken])
 
 // Load the event feed only while the execution logs page is open.
 // Keep the system banner tied to the actual API readiness check.
@@ -250,14 +323,14 @@ useEffect(() => {
 }, [healthCheckVersion])
 
 useEffect(() => {
-  if (activeNav !== 'Execution logs') return
+  if (!authToken || activeNav !== 'Execution logs') return
 
   let cancelled = false
 
   async function loadExecutionEvents() {
     setLoadingEvents(true)
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/events?limit=100`, {
+      const response = await apiFetch(`${API_BASE_URL}/api/v1/events?limit=100`, {
         cache: 'no-store',
       })
       if (!response.ok) throw new Error('Could not load execution events')
@@ -277,17 +350,17 @@ useEffect(() => {
     cancelled = true
     window.clearInterval(intervalId)
   }
-}, [activeNav])
+}, [activeNav, authToken])
 
 // Load and refresh details for the selected job.
 useEffect(() => {
-  if (!selectedJob?.id) return
+  if (!authToken || !selectedJob?.id) return
 
   let cancelled = false
 
   async function loadJobDetails() {
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE_URL}/api/v1/jobs/${selectedJob.id}`,
         { cache: 'no-store' }
       )
@@ -327,7 +400,7 @@ useEffect(() => {
     cancelled = true
     window.clearInterval(intervalId)
   }
-}, [selectedJob?.id])
+}, [selectedJob?.id, authToken])
 
 
 
@@ -415,7 +488,7 @@ async function createJob(event) {
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/jobs`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/v1/jobs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -487,7 +560,7 @@ async function createWorkflow(event) {
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/workflows`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/v1/workflows`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -515,7 +588,7 @@ async function createWorkflow(event) {
 
 async function runWorkflow(workflowId) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/workflows/${workflowId}/run`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/v1/workflows/${workflowId}/run`, {
       method: 'POST',
     })
     const result = await response.json()
@@ -556,6 +629,96 @@ async function runWorkflow(workflowId) {
   ]
 
 
+
+  async function submitAuth(event) {
+    event.preventDefault()
+    setAuthError('')
+    setAuthLoading(true)
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/${authMode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: authEmail,
+          password: authPassword,
+          ...(authMode === 'register' ? { displayName: authDisplayName } : {}),
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error?.message || 'Unable to authenticate')
+
+      sessionStorage.setItem('devmesh_token', result.data.token)
+      setAuthToken(result.data.token)
+      setAuthUser(result.data.user)
+      setAuthChecking(true)
+      setAuthPassword('')
+      setProjectId('')
+    } catch (error) {
+      setAuthError(error.message || 'Unable to authenticate')
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  function signOut() {
+    sessionStorage.removeItem('devmesh_token')
+    setAuthToken('')
+    setAuthUser(null)
+    setAuthChecking(false)
+    setJobs([])
+    setMetrics(null)
+    setProjectId('')
+    setSelectedJob(null)
+    setJobDetails(null)
+    setWorkflows([])
+    setExecutionEvents([])
+  }
+
+  if (authChecking) {
+    return <main className="auth-screen"><p className="auth-description">Checking your session…</p></main>
+  }
+
+  if (!authToken || !authUser) {
+    return (
+      <main className="auth-screen">
+        <section className="auth-card">
+          <div className="auth-brand"><span className="auth-brand-mark"><Workflow size={22} /></span><span>devmesh<span className="brand-period">.</span></span></div>
+          <p className="auth-eyebrow">DISTRIBUTED JOB ORCHESTRATION</p>
+          <h1>{authMode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+          <p className="auth-description">{authMode === 'login' ? 'Sign in to manage your jobs and workflows.' : 'Create a secure workspace for your background jobs.'}</p>
+          <form onSubmit={submitAuth}>
+            {authMode === 'register' && (
+              <label className="auth-label">
+                Display name
+                <input autoComplete="name" value={authDisplayName} onChange={event => setAuthDisplayName(event.target.value)} required minLength={1} maxLength={80} placeholder="Your name" />
+              </label>
+            )}
+            <label className="auth-label">
+              Email address
+              <input type="email" autoComplete="email" value={authEmail} onChange={event => setAuthEmail(event.target.value)} required maxLength={254} placeholder="you@example.com" />
+            </label>
+            <label className="auth-label">
+              Password
+              <input type="password" autoComplete={authMode === 'login' ? 'current-password' : 'new-password'} value={authPassword} onChange={event => setAuthPassword(event.target.value)} required minLength={authMode === 'register' ? 12 : 1} maxLength={128} placeholder={authMode === 'register' ? 'At least 12 characters' : 'Your password'} />
+            </label>
+            {authError && <p className="auth-error" role="alert">{authError}</p>}
+            <button type="submit" className="primary-button auth-submit" disabled={authLoading}>
+              {authLoading ? 'Please wait…' : authMode === 'login' ? 'Sign in' : 'Create account'}
+            </button>
+          </form>
+          <p className="auth-switch">
+            {authMode === 'login' ? "Don't have an account?" : 'Already have an account?'}
+            {' '}
+            <button type="button" onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError('') }}>
+              {authMode === 'login' ? 'Create account' : 'Sign in'}
+            </button>
+          </p>
+          <p className="auth-footnote">Your projects and job history are private to your account.</p>
+        </section>
+      </main>
+    )
+  }
 
   return (
 
@@ -634,9 +797,9 @@ async function runWorkflow(workflowId) {
 
           <div className="profile-row">
 
-            <div className="profile-avatar">DP</div>
+            <div className="profile-avatar">{(authUser.displayName || authUser.email).slice(0, 2).toUpperCase()}</div>
 
-            <div className="profile-copy"><strong>Deepanshu</strong><span>Project owner</span></div>
+            <div className="profile-copy"><strong>{authUser.displayName}</strong><span>{authUser.email}</span></div>
 
             <Ellipsis size={19} className="muted-icon"/>
 
@@ -666,7 +829,8 @@ async function runWorkflow(workflowId) {
 
             <button className="icon-button notification-button" onClick={() => notify('You are all caught up')} aria-label="Notifications"><Bell size={17}/><i/></button>
 
-            <div className="top-avatar">DP</div>
+            <div className="top-avatar">{(authUser.displayName || authUser.email).slice(0, 2).toUpperCase()}</div>
+            <button className="icon-button" onClick={signOut} title="Sign out" aria-label="Sign out"><X size={16}/></button>
 
           </div>
 
@@ -1110,7 +1274,7 @@ async function runWorkflow(workflowId) {
       className="secondary-button"
       onClick={async () => {
         try {
-          const response = await fetch(
+          const response = await apiFetch(
             `${API_BASE_URL}/api/v1/jobs/${jobDetails.id}/cancel`,
             { method: 'POST' },
           )
@@ -1144,7 +1308,7 @@ async function runWorkflow(workflowId) {
       className="secondary-button"
       onClick={async () => {
         try {
-          const response = await fetch(
+          const response = await apiFetch(
             `${API_BASE_URL}/api/v1/jobs/${jobDetails.id}/retry`,
             { method: 'POST' },
           )
@@ -1211,7 +1375,7 @@ async function runWorkflow(workflowId) {
       setSavingJobInput(true)
 
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `${API_BASE_URL}/api/v1/jobs/${jobDetails.id}/input`,
           {
             method: 'PATCH',

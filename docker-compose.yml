@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: devmesh_local_password
       POSTGRES_DB: devmesh
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - devmesh_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +22,7 @@ services:
     container_name: devmesh-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - devmesh_redisdata:/data
@@ -67,10 +67,12 @@ services:
     environment:
       DATABASE_URL: postgresql://devmesh:devmesh_local_password@postgres:5432/devmesh?schema=public
       REDIS_URL: redis://redis:6379
+      NODE_ENV: ${NODE_ENV:-development}
       API_PORT: 4000
       WEB_ORIGIN: http://localhost:4173
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-devmesh-local-auth-secret-change-before-production-32}
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
@@ -113,7 +115,7 @@ services:
     container_name: devmesh-web
     restart: unless-stopped
     ports:
-      - "4173:4173"
+      - "127.0.0.1:4173:4173"
     depends_on:
       api:
         condition: service_healthy

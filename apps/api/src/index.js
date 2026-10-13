@@ -509,7 +509,9 @@ app.get('/api/v1/events', async (req, res) => {
 
   try {
     const events = await prisma.jobEvent.findMany({
-      where: { job: { project: { is: { ownerId: req.auth.userId } } } },
+      where: {
+        job: { is: { project: { is: { ownerId: req.auth.userId } } } },
+      },
       take: parsedLimit.data,
       orderBy: { createdAt: 'desc' },
       include: {
@@ -605,7 +607,7 @@ app.get('/api/v1/metrics', async (req, res) => {
       prisma.jobAttempt.aggregate({
         where: {
           durationMs: { not: null },
-          job: { project: { is: { ownerId: req.auth.userId } } },
+          job: { is: { project: { is: { ownerId: req.auth.userId } } } },
         },
         _avg: { durationMs: true },
       }),

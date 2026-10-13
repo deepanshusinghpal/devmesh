@@ -67,6 +67,7 @@ services:
     environment:
       DATABASE_URL: postgresql://devmesh:devmesh_local_password@postgres:5432/devmesh?schema=public
       REDIS_URL: redis://redis:6379
+      NODE_ENV: ${NODE_ENV:-development}
       API_PORT: 4000
       WEB_ORIGIN: http://localhost:4173
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:-devmesh-local-auth-secret-change-before-production-32}

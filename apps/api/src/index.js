@@ -1203,8 +1203,10 @@ app.post('/api/v1/jobs/:id/retry', async (req, res) => {
     } catch (queueError) {
       console.error('[jobs:retry:queue]', queueError)
 
-      await prisma.$transaction(async tx => {
-        await tx.job.updateMany({
+      const failureRecorded = await prisma.$transaction(async tx => {
+        // A queue error can be an acknowledgement timeout even if a worker
+        // has already claimed the retry. Never overwrite a later job state.
+        const failed = await tx.job.updateMany({
           where: {
             id: jobId,
             retryGeneration: job.retryGeneration,
@@ -1217,6 +1219,8 @@ app.post('/api/v1/jobs/:id/retry', async (req, res) => {
           },
         })
 
+        if (failed.count !== 1) return false
+
         await tx.jobEvent.create({
           data: {
             jobId,
@@ -1224,7 +1228,24 @@ app.post('/api/v1/jobs/:id/retry', async (req, res) => {
             message: 'Unable to enqueue job for retry',
           },
         })
+
+        return true
       })
+
+      if (!failureRecorded) {
+        const latestJob = await prisma.job.findUnique({
+          where: { id: jobId },
+        })
+
+        return res.status(202).json({
+          data: latestJob,
+          meta: {
+            mode: 'database+redis',
+            action: 'manual-retry',
+            queueSubmissionUncertain: true,
+          },
+        })
+      }
 
       return res.status(503).json({
         error: { message: 'Unable to enqueue job for retry' },
